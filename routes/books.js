@@ -1,18 +1,28 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const Book = require('../models/Book');
 const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Ensure upload folders exist (Render/Linux is case-sensitive and folders may not exist by default)
+const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+const BOOKS_DIR = path.join(UPLOADS_DIR, 'books');
+const COVERS_DIR = path.join(UPLOADS_DIR, 'covers');
+fs.mkdirSync(BOOKS_DIR, { recursive: true });
+fs.mkdirSync(COVERS_DIR, { recursive: true });
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     if (file.fieldname === 'pdfFile') {
-      cb(null, 'uploads/books/');
+      cb(null, BOOKS_DIR);
     } else if (file.fieldname === 'coverImage') {
-      cb(null, 'uploads/covers/');
+      cb(null, COVERS_DIR);
+    } else {
+      cb(new Error('Unknown upload field'));
     }
   },
   filename: (req, file, cb) => {
@@ -39,6 +49,8 @@ const upload = multer({
       } else {
         cb(new Error('Only image files are allowed for covers'));
       }
+    } else {
+      cb(new Error('Unknown upload field'));
     }
   }
 });
@@ -46,62 +58,37 @@ const upload = multer({
 // Get all books (public, with filters)
 router.get('/', async (req, res) => {
   try {
-    const { genre, search, sortBy = 'createdAt', order = 'desc', minPrice, maxPrice, status } = req.query;
-    
-    // For public catalog, show all non-deleted books regardless of status
-    // (there is no manual approval step; only deleted books are hidden)
+    const { genre, search, sortBy = 'createdAt', order = 'desc', minPrice, maxPrice } = req.query;
+
+    // Public catalog: show all non-deleted books
     let query = { isDeleted: false };
-    
-    if (genre) {
-      query.genre = genre;
-    }
-    
-    if (search) {
-      query.$text = { $search: search };
-    }
-    
+
+    if (genre) query.genre = genre;
+    if (search) query.$text = { $search: search };
+
     if (minPrice || maxPrice) {
       query.price = {};
       if (minPrice) query.price.$gte = parseFloat(minPrice);
       if (maxPrice) query.price.$lte = parseFloat(maxPrice);
     }
-    
+
     let sortOptions = {};
-    if (sortBy === 'popularity') {
-      sortOptions = { salesCount: order === 'asc' ? 1 : -1 };
-    } else if (sortBy === 'rating') {
-      sortOptions = { rating: order === 'asc' ? 1 : -1 };
-    } else if (sortBy === 'price') {
-      sortOptions = { price: order === 'asc' ? 1 : -1 };
-    } else {
-      sortOptions = { createdAt: order === 'asc' ? 1 : -1 };
-    }
-    
+    if (sortBy === 'popularity') sortOptions = { salesCount: order === 'asc' ? 1 : -1 };
+    else if (sortBy === 'rating') sortOptions = { rating: order === 'asc' ? 1 : -1 };
+    else if (sortBy === 'price') sortOptions = { price: order === 'asc' ? 1 : -1 };
+    else sortOptions = { createdAt: order === 'asc' ? 1 : -1 };
+
     const books = await Book.find(query)
       .populate('author', 'name email')
       .sort(sortOptions);
-    
+
     res.json(books);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
-// Get book by ID
-router.get('/:id', async (req, res) => {
-  try {
-    const book = await Book.findById(req.params.id)
-      .populate('author', 'name email');
-    
-    if (!book || book.isDeleted) {
-      return res.status(404).json({ message: 'Book not found' });
-    }
-    
-    res.json(book);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
+// IMPORTANT: Keep specific routes ABOVE '/:id' to avoid route conflicts.
 
 // Get genres
 router.get('/genres/list', async (req, res) => {
@@ -139,6 +126,22 @@ router.get('/featured/new', async (req, res) => {
   }
 });
 
+// Get book by ID
+router.get('/:id', async (req, res) => {
+  try {
+    const book = await Book.findById(req.params.id)
+      .populate('author', 'name email');
+
+    if (!book || book.isDeleted) {
+      return res.status(404).json({ message: 'Book not found' });
+    }
+
+    res.json(book);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Create book (author only)
 router.post('/', auth, authorize('author'), upload.fields([
   { name: 'pdfFile', maxCount: 1 },
@@ -146,26 +149,29 @@ router.post('/', auth, authorize('author'), upload.fields([
 ]), async (req, res) => {
   try {
     const { title, description, genre, price } = req.body;
-    
-    if (!req.files.pdfFile || !req.files.coverImage) {
+
+    if (!req.files?.pdfFile?.[0] || !req.files?.coverImage?.[0]) {
       return res.status(400).json({ message: 'PDF file and cover image are required' });
     }
-    
+
+    // Store RELATIVE paths so the frontend can build URLs like: FILE_BASE_URL + '/' + pdfFile
+    const pdfRelPath = `uploads/books/${req.files.pdfFile[0].filename}`;
+    const coverRelPath = `uploads/covers/${req.files.coverImage[0].filename}`;
+
     const book = new Book({
       title,
       description,
       genre,
       price: parseFloat(price),
       author: req.user._id,
-      pdfFile: req.files.pdfFile[0].path,
-      coverImage: req.files.coverImage[0].path,
-      // Books go live immediately; no approval step required
+      pdfFile: pdfRelPath,
+      coverImage: coverRelPath,
       status: 'approved'
     });
-    
+
     await book.save();
     await book.populate('author', 'name email');
-    
+
     res.status(201).json(book);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -179,29 +185,34 @@ router.put('/:id', auth, authorize('author'), upload.fields([
 ]), async (req, res) => {
   try {
     const book = await Book.findById(req.params.id);
-    
+
     if (!book) {
       return res.status(404).json({ message: 'Book not found' });
     }
-    
+
     if (book.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized to edit this book' });
     }
-    
+
     const { title, description, genre, price } = req.body;
-    
+
     if (title) book.title = title;
     if (description) book.description = description;
     if (genre) book.genre = genre;
     if (price) book.price = parseFloat(price);
-    if (req.files.pdfFile) book.pdfFile = req.files.pdfFile[0].path;
-    if (req.files.coverImage) book.coverImage = req.files.coverImage[0].path;
-    
+
+    if (req.files?.pdfFile?.[0]) {
+      book.pdfFile = `uploads/books/${req.files.pdfFile[0].filename}`;
+    }
+    if (req.files?.coverImage?.[0]) {
+      book.coverImage = `uploads/covers/${req.files.coverImage[0].filename}`;
+    }
+
     book.updatedAt = Date.now();
-    
+
     await book.save();
     await book.populate('author', 'name email');
-    
+
     res.json(book);
   } catch (error) {
     res.status(500).json({ message: error.message });
