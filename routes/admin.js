@@ -6,11 +6,44 @@ const Book = require('../models/Book');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Coupon = require('../models/Coupon');
+const PlatformFeeStatus = require('../models/PlatformFeeStatus');
 const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
 const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 10);
+
+
+function parsePeriod(periodStr) {
+  // periodStr: YYYY-MM
+  if (!periodStr || !/^\d{4}-\d{2}$/.test(periodStr)) return null;
+  const [y, m] = periodStr.split('-').map(n => parseInt(n, 10));
+  if (!y || !m || m < 1 || m > 12) return null;
+  return { year: y, month: m };
+}
+
+function periodRange(periodStr) {
+  const p = parsePeriod(periodStr);
+  if (!p) return null;
+  const start = new Date(p.year, p.month - 1, 1);
+  const end = new Date(p.year, p.month, 1);
+  return { start, end, year: p.year, month: p.month };
+}
+
+function previousMonthPeriod() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1; // 1-12
+  const prevM = m === 1 ? 12 : m - 1;
+  const prevY = m === 1 ? y - 1 : y;
+  return `${prevY}-${String(prevM).padStart(2, '0')}`;
+}
+
+function calcFeeFromNet(net, feePct) {
+  const rate = feePct / 100;
+  if (rate <= 0 || rate >= 1) return 0;
+  return net * (rate / (1 - rate));
+}
 
 // Approve/Reject book
 router.patch('/books/:id/status', auth, authorize('admin'), async (req, res) => {
@@ -704,10 +737,180 @@ router.get('/reports/monthly/:year/:month', auth, authorize('admin'), async (req
 router.get('/authors', auth, authorize('admin'), async (req, res) => {
   try {
     const authors = await User.find({ role: 'author' })
-      .select('name email payoutPaypalEmail createdAt')
+      .select('name email payoutPaypalEmail isBlocked blockedReason blockedAt createdAt')
       .sort({ createdAt: -1 });
     
     res.json(authors);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+
+// ===== Platform fee tracking (manual payment) =====
+// Admin: list fee status per author for a given month (period=YYYY-MM). Default: previous month.
+router.get('/fees', auth, authorize('admin'), async (req, res) => {
+  try {
+    const period = (req.query.period || '').trim() || previousMonthPeriod();
+    const range = periodRange(period);
+    if (!range) return res.status(400).json({ message: 'Invalid period. Use YYYY-MM.' });
+
+    const orders = await Order.find({
+      paymentStatus: 'completed',
+      createdAt: { $gte: range.start, $lt: range.end }
+    }).select('authorEarningsBreakdown createdAt');
+
+    const perAuthor = new Map();
+
+    for (const order of orders) {
+      if (!Array.isArray(order.authorEarningsBreakdown)) continue;
+      for (const row of order.authorEarningsBreakdown) {
+        const authorId = String(row.author);
+        const net = Number(row.amount || 0);
+        if (!authorId || net <= 0) continue;
+
+        const feeDue = calcFeeFromNet(net, PLATFORM_FEE_PERCENTAGE);
+        const gross = net + feeDue;
+
+        const acc = perAuthor.get(authorId) || { gross: 0, net: 0, feeDue: 0, salesCount: 0 };
+        acc.gross += gross;
+        acc.net += net;
+        acc.feeDue += feeDue;
+        acc.salesCount += 1;
+        perAuthor.set(authorId, acc);
+      }
+    }
+
+    const authors = await User.find({ role: 'author' })
+      .select('name email isBlocked blockedReason blockedAt payoutPaypalEmail')
+      .sort({ createdAt: -1 });
+
+    const statuses = await PlatformFeeStatus.find({ period }).select('author isPaid paidAt note');
+    const statusMap = new Map(statuses.map(s => [String(s.author), s]));
+
+    const dueDate = new Date(range.year, range.month, 10); // 10th of next month (range.month is 1-12 for the period month; JS months 0-11, but here we set next month by using month index = range.month)
+    // Explanation: if period is Jan (month=1), dueDate = Feb 10 because new Date(year, 1, 10) -> Feb 10.
+
+    const result = authors.map(a => {
+      const stats = perAuthor.get(String(a._id)) || { gross: 0, net: 0, feeDue: 0, salesCount: 0 };
+      const st = statusMap.get(String(a._id));
+      const isPaid = st ? !!st.isPaid : false;
+      const paidAt = st ? st.paidAt : null;
+
+      const now = new Date();
+      const isOverdue = !isPaid && now >= dueDate;
+
+      return {
+        authorId: a._id,
+        name: a.name,
+        email: a.email,
+        isBlocked: a.isBlocked,
+        blockedReason: a.blockedReason,
+        blockedAt: a.blockedAt,
+        period,
+        dueDate,
+        grossSales: Number(stats.gross.toFixed(2)),
+        authorNet: Number(stats.net.toFixed(2)),
+        platformFeeDue: Number(stats.feeDue.toFixed(2)),
+        salesCount: stats.salesCount,
+        isPaid,
+        paidAt,
+        isOverdue
+      };
+    });
+
+    res.json({ period, dueDate, feePercentage: PLATFORM_FEE_PERCENTAGE, rows: result });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Admin: mark paid/unpaid for a given author+period
+router.post('/fees/:authorId/mark-paid', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { period, note } = req.body || {};
+    const p = (period || '').trim() || previousMonthPeriod();
+    if (!parsePeriod(p)) return res.status(400).json({ message: 'Invalid period. Use YYYY-MM.' });
+
+    const author = await User.findOne({ _id: req.params.authorId, role: 'author' });
+    if (!author) return res.status(404).json({ message: 'Author not found' });
+
+    const status = await PlatformFeeStatus.findOneAndUpdate(
+      { author: author._id, period: p },
+      { isPaid: true, paidAt: new Date(), note: note || '', updatedAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    // ✅ When the fee is marked as paid, automatically unblock the author
+    // (publishing restriction + hidden books are removed)
+    const updatedAuthor = await User.findOneAndUpdate(
+      { _id: author._id, role: 'author' },
+      { isBlocked: false, blockedReason: null, blockedAt: null },
+      { new: true }
+    ).select('name email payoutPaypalEmail isBlocked blockedReason blockedAt createdAt');
+
+    res.json({ success: true, status, author: updatedAuthor });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.post('/fees/:authorId/mark-unpaid', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { period, note } = req.body || {};
+    const p = (period || '').trim() || previousMonthPeriod();
+    if (!parsePeriod(p)) return res.status(400).json({ message: 'Invalid period. Use YYYY-MM.' });
+
+    const author = await User.findOne({ _id: req.params.authorId, role: 'author' });
+    if (!author) return res.status(404).json({ message: 'Author not found' });
+
+    const status = await PlatformFeeStatus.findOneAndUpdate(
+      { author: author._id, period: p },
+      { isPaid: false, paidAt: null, note: note || '', updatedAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    res.json({ success: true, status });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+// Block / Unblock author (manual control for unpaid platform fee)
+router.patch('/authors/:authorId/block', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { reason } = req.body || {};
+    const author = await User.findOneAndUpdate(
+      { _id: req.params.authorId, role: 'author' },
+      { isBlocked: true, blockedReason: reason || 'Unpaid platform fee', blockedAt: new Date() },
+      { new: true }
+    ).select('name email payoutPaypalEmail isBlocked blockedReason blockedAt createdAt');
+
+    if (!author) {
+      return res.status(404).json({ message: 'Author not found' });
+    }
+
+    res.json(author);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.patch('/authors/:authorId/unblock', auth, authorize('admin'), async (req, res) => {
+  try {
+    const author = await User.findOneAndUpdate(
+      { _id: req.params.authorId, role: 'author' },
+      { isBlocked: false, blockedReason: null, blockedAt: null },
+      { new: true }
+    ).select('name email payoutPaypalEmail isBlocked blockedReason blockedAt createdAt');
+
+    if (!author) {
+      return res.status(404).json({ message: 'Author not found' });
+    }
+
+    res.json(author);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

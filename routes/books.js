@@ -78,9 +78,12 @@ router.get('/', async (req, res) => {
     else if (sortBy === 'price') sortOptions = { price: order === 'asc' ? 1 : -1 };
     else sortOptions = { createdAt: order === 'asc' ? 1 : -1 };
 
-    const books = await Book.find(query)
-      .populate('author', 'name email')
+    const booksRaw = await Book.find(query)
+      .populate('author', 'name email isBlocked')
       .sort(sortOptions);
+
+    // Filter out books whose author is blocked (unpaid fees / admin restriction)
+    const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
 
     res.json(books);
   } catch (error) {
@@ -130,9 +133,14 @@ router.get('/featured/new', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const book = await Book.findById(req.params.id)
-      .populate('author', 'name email');
+      .populate('author', 'name email isBlocked');
 
     if (!book || book.isDeleted) {
+      return res.status(404).json({ message: 'Book not found' });
+    }
+
+    // Hide blocked authors' books from the public catalog
+    if (book?.author?.isBlocked) {
       return res.status(404).json({ message: 'Book not found' });
     }
 
@@ -149,6 +157,11 @@ router.post('/', auth, authorize('author'), upload.fields([
 ]), async (req, res) => {
   try {
     const { title, description, genre, price } = req.body;
+
+    // Publishing is restricted if the author is blocked (e.g., unpaid platform fee)
+    if (req.user?.isBlocked) {
+      return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to publish books.' });
+    }
 
     if (!req.files?.pdfFile?.[0] || !req.files?.coverImage?.[0]) {
       return res.status(400).json({ message: 'PDF file and cover image are required' });
@@ -184,6 +197,9 @@ router.put('/:id', auth, authorize('author'), upload.fields([
   { name: 'coverImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
+    if (req.user?.isBlocked) {
+      return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to edit books.' });
+    }
     const book = await Book.findById(req.params.id);
 
     if (!book) {
@@ -195,6 +211,11 @@ router.put('/:id', auth, authorize('author'), upload.fields([
     }
 
     const { title, description, genre, price } = req.body;
+
+    // Publishing is restricted if the author is blocked (e.g., unpaid platform fee)
+    if (req.user?.isBlocked) {
+      return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to publish books.' });
+    }
 
     if (title) book.title = title;
     if (description) book.description = description;

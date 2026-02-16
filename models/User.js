@@ -35,6 +35,17 @@ const userSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
+  isBlocked: {
+    type: Boolean,
+    default: false
+  },
+  blockedReason: {
+    type: String,
+    trim: true
+  },
+  blockedAt: {
+    type: Date
+  },
   createdAt: {
     type: Date,
     default: Date.now
