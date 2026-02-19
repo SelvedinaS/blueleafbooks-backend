@@ -231,7 +231,7 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
       trialEndsAt: trial.trialEndsAt || null,
       adminPaymentEmail,
       booksList: books
-    }););
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
