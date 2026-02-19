@@ -3,55 +3,182 @@ const PDFDocument = require('pdfkit');
 const Book = require('../models/Book');
 const Order = require('../models/Order');
 const User = require('../models/User');
+const PlatformFeeStatus = require('../models/PlatformFeeStatus');
 const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
 const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 10);
 
+function calcFeeFromNet(net, feePct) {
+  const rate = feePct / 100;
+  if (rate <= 0 || rate >= 1) return 0;
+  return net * (rate / (1 - rate));
+}
+
+function isoDate(d) {
+  return new Date(d).toISOString().slice(0, 10);
+}
+
+function isoMonth(d) {
+  const dd = new Date(d);
+  const y = dd.getFullYear();
+  const m = String(dd.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+function monthRangeFromPeriod(periodStr) {
+  if (!periodStr || !/^\d{4}-\d{2}$/.test(periodStr)) return null;
+  const [y, m] = periodStr.split('-').map(n => parseInt(n, 10));
+  if (!y || !m || m < 1 || m > 12) return null;
+  const start = new Date(y, m - 1, 1, 0, 0, 0, 0);
+  const end = new Date(y, m, 1, 0, 0, 0, 0);
+  return { start, end, year: y, month: m };
+}
+
+function previousMonthPeriod(now = new Date()) {
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1; // 1-12
+  const prevM = m === 1 ? 12 : m - 1;
+  const prevY = m === 1 ? y - 1 : y;
+  return `${prevY}-${String(prevM).padStart(2, '0')}`;
+}
+
+function currentMonthPeriod(now = new Date()) {
+  return isoMonth(now);
+}
+
+function trialInfo(createdAt, now = new Date()) {
+  const created = new Date(createdAt);
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+  const trialEndsAt = new Date(created.getTime() + THIRTY_DAYS_MS);
+  const isInTrial = now < trialEndsAt;
+
+  const trialDaysRemaining = isInTrial
+    ? Math.ceil((trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+    : 0;
+
+  return { trialEndsAt, isInTrial, trialDaysRemaining };
+}
+
+function effectivePeriodStart(monthStart, trialEndsAt) {
+  if (!trialEndsAt) return monthStart;
+  return trialEndsAt > monthStart ? trialEndsAt : monthStart;
+}
+
 // Get author dashboard stats
 router.get('/dashboard', auth, authorize('author'), async (req, res) => {
   try {
     const authorId = req.user._id;
 
-    // Fetch author user record (needed for PayPal gate)
-    const user = await User.findById(authorId).select('payoutPaypalEmail');
+    // Fetch author user record (needed for PayPal gate + billing window)
+    const user = await User.findById(authorId).select('payoutPaypalEmail createdAt');
 // Get author's books (include deleted for history)
     const books = await Book.find({ author: authorId })
       .sort({ createdAt: -1 });
     
-    // Calculate total sales
-    const orders = await Order.find({
+    const now = new Date();
+    const adminPaymentEmail = (process.env.ADMIN_EMAIL || 'blueleafbooks@hotmail.com');
+
+    // Trial (first 30 days from registration)
+    const trial = user?.createdAt ? trialInfo(user.createdAt, now) : { trialEndsAt: null, isInTrial: false, trialDaysRemaining: 0 };
+
+    const isInFirst30Days = !!trial.isInTrial;
+    const daysUntilFee = trial.trialDaysRemaining || 0;
+
+    // Calendar-month billing (after trial):
+    // - Trial ends on trialEndsAt (e.g. 5 Mar)
+    // - First payable period is from trialEndsAt to end of that calendar month (e.g. 5 Mar -> 1 Apr)
+    // - Then full calendar months (1 -> 1)
+    const currentPeriod = currentMonthPeriod(now);
+    const prevPeriod = previousMonthPeriod(now);
+
+    const currentRange = monthRangeFromPeriod(currentPeriod);
+    const prevRange = monthRangeFromPeriod(prevPeriod);
+
+    const effectiveCurrentStart = (!isInFirst30Days && currentRange && trial.trialEndsAt)
+      ? effectivePeriodStart(currentRange.start, trial.trialEndsAt)
+      : null;
+
+    const effectivePrevStart = (!prevRange || !trial.trialEndsAt)
+      ? null
+      : effectivePeriodStart(prevRange.start, trial.trialEndsAt);
+
+    // Orders (all-time) for totals
+    const ordersAll = await Order.find({
       'items.book': { $in: books.map(b => b._id) },
       paymentStatus: 'completed'
     });
-    
+
+    // Orders for current month (accrued, not yet due)
+    const ordersCurrent = (!isInFirst30Days && currentRange && effectiveCurrentStart && effectiveCurrentStart < currentRange.end)
+      ? await Order.find({
+          paymentStatus: 'completed',
+          createdAt: { $gte: effectiveCurrentStart, $lt: currentRange.end },
+          'authorEarningsBreakdown.author': authorId
+        }).select('authorEarningsBreakdown createdAt')
+      : [];
+
+    // Orders for previous month (due by 10th of current month)
+    const ordersPrev = (prevRange && effectivePrevStart && effectivePrevStart < prevRange.end)
+      ? await Order.find({
+          paymentStatus: 'completed',
+          createdAt: { $gte: effectivePrevStart, $lt: prevRange.end },
+          'authorEarningsBreakdown.author': authorId
+        }).select('authorEarningsBreakdown createdAt')
+      : [];
+
     let totalSales = 0;
     let totalEarnings = 0;
     let unpaidEarnings = 0;
-    
-    for (const order of orders) {
-      for (const item of order.items) {
-        const book = books.find(b => b._id.toString() === item.book.toString());
-        if (book) {
-          totalSales += 1;
-          
-          const authorEarning = order.authorEarningsBreakdown.find(
-            e => e.author.toString() === authorId.toString()
-          );
-          
-          if (authorEarning) {
-            totalEarnings += authorEarning.amount;
-            if (!authorEarning.paidOut) {
-              unpaidEarnings += authorEarning.amount;
-            }
-          }
-        }
-      }
-    }
-    
+    let platformFeeDueTotal = 0;
+    let grossSalesTotal = 0;
+    // ===== Calendar-month platform fee (after trial) =====
+    let currentMonthFeeAccrued = 0;
+    let currentMonthGrossSales = 0;
 
-    // Auto-publish gate: books are visible only when PayPal email is set
+    for (const order of ordersCurrent) {
+      if (!Array.isArray(order.authorEarningsBreakdown)) continue;
+      const row = order.authorEarningsBreakdown.find(e => String(e.author) === String(authorId));
+      if (!row) continue;
+      const net = Number(row.amount || 0);
+      const fee = calcFeeFromNet(net, PLATFORM_FEE_PERCENTAGE);
+      currentMonthFeeAccrued += fee;
+      currentMonthGrossSales += net + fee;
+    }
+
+    let lastMonthFeeDue = 0;
+    let lastMonthGrossSales = 0;
+
+    for (const order of ordersPrev) {
+      if (!Array.isArray(order.authorEarningsBreakdown)) continue;
+      const row = order.authorEarningsBreakdown.find(e => String(e.author) === String(authorId));
+      if (!row) continue;
+      const net = Number(row.amount || 0);
+      const fee = calcFeeFromNet(net, PLATFORM_FEE_PERCENTAGE);
+      lastMonthFeeDue += fee;
+      lastMonthGrossSales += net + fee;
+    }
+
+    // Status for last month (manual payment tracking)
+    let lastMonthStatus = { isPaid: false, paidAt: null, note: '' };
+    if (prevPeriod) {
+      const st = await PlatformFeeStatus.findOne({ author: authorId, period: prevPeriod }).select('isPaid paidAt note');
+      if (st) lastMonthStatus = { isPaid: !!st.isPaid, paidAt: st.paidAt || null, note: st.note || '' };
+    }
+
+    // Due dates:
+    // - last month is due on the 10th of the CURRENT month
+    // - current month will be due on the 10th of NEXT month
+    const lastMonthDueDate = prevRange ? new Date(prevRange.end.getFullYear(), prevRange.end.getMonth(), 10) : null;
+    const currentMonthDueDate = currentRange ? new Date(currentRange.end.getFullYear(), currentRange.end.getMonth(), 10) : null;
+
+    const lastMonthOverdue = !!(lastMonthDueDate && !lastMonthStatus.isPaid && now > lastMonthDueDate && lastMonthFeeDue > 0);
+
+    // During trial: nothing due yet.
+    const platformFeeToShow = isInFirst30Days ? 0 : lastMonthFeeDue;
+    const grossSalesToShow = isInFirst30Days ? 0 : lastMonthGrossSales;
+// Auto-publish gate: books are visible only when PayPal email is set
     const hasPaypal = !!(user.payoutPaypalEmail && user.payoutPaypalEmail.trim() !== '');
     if (hasPaypal) {
       // Approve pending books (do not touch rejected)
@@ -72,8 +199,39 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
       totalSales,
       totalEarnings: totalEarnings.toFixed(2),
       unpaidEarnings: unpaidEarnings.toFixed(2),
+
+      // Last month (previous calendar month) — DUE by the 10th of this month
+      platformFee: Number(platformFeeToShow.toFixed(2)),
+      grossSales: Number(grossSalesToShow.toFixed(2)),
+      lastMonth: {
+        period: prevPeriod,
+        start: prevRange ? prevRange.start : null,
+        end: prevRange ? prevRange.end : null,
+        effectiveStart: (prevRange && effectivePrevStart) ? effectivePrevStart : null,
+        grossSales: Number(lastMonthGrossSales.toFixed(2)),
+        feeDue: Number(lastMonthFeeDue.toFixed(2)),
+        dueDate: lastMonthDueDate,
+        status: lastMonthStatus,
+        overdue: lastMonthOverdue
+      },
+
+      // Current month (accrued, not due yet) — will be due by the 10th of next month
+      currentMonth: {
+        period: currentPeriod,
+        start: currentRange ? currentRange.start : null,
+        end: currentRange ? currentRange.end : null,
+        effectiveStart: (currentRange && effectiveCurrentStart) ? effectiveCurrentStart : null,
+        grossSalesAccrued: Number(currentMonthGrossSales.toFixed(2)),
+        feeAccrued: Number(currentMonthFeeAccrued.toFixed(2)),
+        dueDate: currentMonthDueDate
+      },
+
+      isInFirst30Days,
+      daysUntilFee,
+      trialEndsAt: trial.trialEndsAt || null,
+      adminPaymentEmail,
       booksList: books
-    });
+    }););
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
