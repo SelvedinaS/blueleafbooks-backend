@@ -136,12 +136,12 @@ router.get('/reports/authors/:authorId/:year/:month', auth, authorize('admin'), 
 
     // Need authors' trial end to exclude sales during the free 30-day period
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-    const authors = await User.find({ role: 'author' })
+    const authorsForTrial = await User.find({ role: 'author' })
       .select('name email isBlocked blockedReason blockedAt payoutPaypalEmail createdAt')
       .sort({ createdAt: -1 });
 
     const trialEndsMap = new Map();
-    for (const a of authors) {
+    for (const a of authorsForTrial) {
       const createdAt = a.createdAt ? new Date(a.createdAt) : null;
       const trialEndsAt = createdAt ? new Date(createdAt.getTime() + THIRTY_DAYS_MS) : null;
       trialEndsMap.set(String(a._id), trialEndsAt);
@@ -172,7 +172,7 @@ router.get('/reports/authors/:authorId/:year/:month', auth, authorize('admin'), 
       }
     }
 
-    const authors = await User.find({ role: 'author' })
+    const authorsList = await User.find({ role: 'author' })
       .select('name email isBlocked blockedReason blockedAt payoutPaypalEmail')
       .sort({ createdAt: -1 });
 
@@ -182,7 +182,7 @@ router.get('/reports/authors/:authorId/:year/:month', auth, authorize('admin'), 
     const dueDate = new Date(range.year, range.month, 10); // 10th of next month (range.month is 1-12 for the period month; JS months 0-11, but here we set next month by using month index = range.month)
     // Explanation: if period is Jan (month=1), dueDate = Feb 10 because new Date(year, 1, 10) -> Feb 10.
 
-    const result = authors.map(a => {
+    const result = authorsList.map(a => {
       const stats = perAuthor.get(String(a._id)) || { gross: 0, net: 0, feeDue: 0, salesCount: 0 };
       const st = statusMap.get(String(a._id));
       const isPaid = st ? !!st.isPaid : false;
