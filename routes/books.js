@@ -61,7 +61,7 @@ router.get('/', async (req, res) => {
     const { genre, search, sortBy = 'createdAt', order = 'desc', minPrice, maxPrice } = req.query;
 
     // Public catalog: show all non-deleted books
-    let query = { isDeleted: false };
+    let query = { isDeleted: false, status: 'approved' };
 
     if (genre) query.genre = genre;
     if (search) query.$text = { $search: search };
@@ -129,6 +129,22 @@ router.get('/featured/new', async (req, res) => {
   }
 });
 
+
+// Curated featured books: manually selected by admin (isFeatured + featuredOrder)
+router.get('/featured/curated', async (req, res) => {
+  try {
+    const booksRaw = await Book.find({ isDeleted: false, status: 'approved', isFeatured: true })
+      .sort({ featuredOrder: 1, createdAt: -1 })
+      .limit(12)
+      .populate('author', 'name email isBlocked');
+
+    const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
+    res.json(books);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get book by ID
 router.get('/:id', async (req, res) => {
   try {
@@ -179,8 +195,7 @@ router.post('/', auth, authorize('author'), upload.fields([
       author: req.user._id,
       pdfFile: pdfRelPath,
       coverImage: coverRelPath,
-      status: 'approved'
-    });
+      status: (req.user?.payoutPaypalEmail ? 'approved' : 'pending')});
 
     await book.save();
     await book.populate('author', 'name email');

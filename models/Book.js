@@ -51,6 +51,16 @@ const bookSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  isFeatured: {
+    type: Boolean,
+    default: false
+  },
+  featuredOrder: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+
   status: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],

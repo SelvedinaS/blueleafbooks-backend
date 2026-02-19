@@ -48,6 +48,23 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
       }
     }
     
+
+    // Auto-publish gate: books are visible only when PayPal email is set
+    const hasPaypal = !!(user.payoutPaypalEmail && user.payoutPaypalEmail.trim() !== '');
+    if (hasPaypal) {
+      // Approve pending books (do not touch rejected)
+      await Book.updateMany(
+        { author: req.user._id, isDeleted: false, status: 'pending' },
+        { $set: { status: 'approved' } }
+      );
+    } else {
+      // If PayPal removed, hide previously approved books (do not touch rejected)
+      await Book.updateMany(
+        { author: req.user._id, isDeleted: false, status: 'approved' },
+        { $set: { status: 'pending' } }
+      );
+    }
+
     res.json({
       books: books.length,
       totalSales,
@@ -77,6 +94,23 @@ router.get('/my-books', auth, authorize('author'), async (req, res) => {
 router.get('/payout-settings', auth, authorize('author'), async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('payoutPaypalEmail');
+
+    // Auto-publish gate: books are visible only when PayPal email is set
+    const hasPaypal = !!(user.payoutPaypalEmail && user.payoutPaypalEmail.trim() !== '');
+    if (hasPaypal) {
+      // Approve pending books (do not touch rejected)
+      await Book.updateMany(
+        { author: req.user._id, isDeleted: false, status: 'pending' },
+        { $set: { status: 'approved' } }
+      );
+    } else {
+      // If PayPal removed, hide previously approved books (do not touch rejected)
+      await Book.updateMany(
+        { author: req.user._id, isDeleted: false, status: 'approved' },
+        { $set: { status: 'pending' } }
+      );
+    }
+
     res.json({
       payoutPaypalEmail: user.payoutPaypalEmail || ''
     });
@@ -104,6 +138,23 @@ router.post('/payout-settings', auth, authorize('author'), async (req, res) => {
       { new: true }
     ).select('name email payoutPaypalEmail');
     
+
+    // Auto-publish gate: books are visible only when PayPal email is set
+    const hasPaypal = !!(user.payoutPaypalEmail && user.payoutPaypalEmail.trim() !== '');
+    if (hasPaypal) {
+      // Approve pending books (do not touch rejected)
+      await Book.updateMany(
+        { author: req.user._id, isDeleted: false, status: 'pending' },
+        { $set: { status: 'approved' } }
+      );
+    } else {
+      // If PayPal removed, hide previously approved books (do not touch rejected)
+      await Book.updateMany(
+        { author: req.user._id, isDeleted: false, status: 'approved' },
+        { $set: { status: 'pending' } }
+      );
+    }
+
     res.json({
       message: 'Payout settings updated successfully',
       user: {

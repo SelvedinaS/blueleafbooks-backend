@@ -1130,4 +1130,26 @@ router.delete('/coupons/:id', auth, authorize('admin'), async (req, res) => {
   }
 });
 
+
+
+// Update featured flag/order for curated sections
+router.patch('/books/:id/featured', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { isFeatured, featuredOrder } = req.body;
+
+    const update = {};
+    if (typeof isFeatured === 'boolean') update.isFeatured = isFeatured;
+    if (featuredOrder !== undefined) update.featuredOrder = Math.max(0, parseInt(featuredOrder, 10) || 0);
+
+    const book = await Book.findByIdAndUpdate(req.params.id, update, { new: true })
+      .populate('author', 'name email');
+
+    if (!book) return res.status(404).json({ message: 'Book not found' });
+
+    res.json({ message: 'Featured updated', book });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 module.exports = router;
