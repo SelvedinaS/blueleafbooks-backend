@@ -842,15 +842,12 @@ router.post('/fees/:authorId/mark-paid', auth, authorize('admin'), async (req, r
       { upsert: true, new: true }
     );
 
-    // ✅ When the fee is marked as paid, automatically unblock the author
-    // (publishing restriction + hidden books are removed)
-    const updatedAuthor = await User.findOneAndUpdate(
-      { _id: author._id, role: 'author' },
-      { isBlocked: false, blockedReason: null, blockedAt: null },
-      { new: true }
-    ).select('name email payoutPaypalEmail isBlocked blockedReason blockedAt createdAt');
+    // Manual control requested: marking as paid does NOT automatically unblock.
+    // Admin can still unblock explicitly via PATCH /admin/authors/:authorId/unblock.
+    const currentAuthor = await User.findById(author._id)
+      .select('name email payoutPaypalEmail isBlocked blockedReason blockedAt createdAt');
 
-    res.json({ success: true, status, author: updatedAuthor });
+    res.json({ success: true, status, author: currentAuthor });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

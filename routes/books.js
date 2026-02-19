@@ -106,10 +106,13 @@ router.get('/genres/list', async (req, res) => {
 // Get best sellers
 router.get('/featured/bestsellers', async (req, res) => {
   try {
-    const books = await Book.find({ isDeleted: false })
+    const booksRaw = await Book.find({ isDeleted: false, status: 'approved' })
       .sort({ salesCount: -1 })
       .limit(10)
-      .populate('author', 'name');
+      .populate('author', 'name email isBlocked');
+
+    // Hide blocked authors' books from public lists
+    const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
     res.json(books);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -119,10 +122,12 @@ router.get('/featured/bestsellers', async (req, res) => {
 // Get newly added
 router.get('/featured/new', async (req, res) => {
   try {
-    const books = await Book.find({ isDeleted: false })
+    const booksRaw = await Book.find({ isDeleted: false, status: 'approved' })
       .sort({ createdAt: -1 })
       .limit(10)
-      .populate('author', 'name');
+      .populate('author', 'name email isBlocked');
+
+    const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
     res.json(books);
   } catch (error) {
     res.status(500).json({ message: error.message });

@@ -13,8 +13,10 @@ const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE |
 router.get('/dashboard', auth, authorize('author'), async (req, res) => {
   try {
     const authorId = req.user._id;
-    
-    // Get author's books (include deleted for history)
+
+    // Fetch author user record (needed for PayPal gate)
+    const user = await User.findById(authorId).select('payoutPaypalEmail');
+// Get author's books (include deleted for history)
     const books = await Book.find({ author: authorId })
       .sort({ createdAt: -1 });
     
