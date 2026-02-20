@@ -45,6 +45,31 @@ function calcFeeFromNet(net, feePct) {
   return net * (rate / (1 - rate));
 }
 
+function getBillingWindow(createdAt, now) {
+  const created = new Date(createdAt);
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+  const trialEndsAt = new Date(created.getTime() + THIRTY_DAYS_MS);
+  const isInTrial = now < trialEndsAt;
+  const billingDay = Math.min(28, Math.max(1, created.getDate()));
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const periodStart = now.getDate() >= billingDay
+    ? new Date(y, m, billingDay, 0, 0, 0, 0)
+    : new Date(y, m - 1, billingDay, 0, 0, 0, 0);
+  return { periodStart, billingDay, isInTrial, trialEndsAt };
+}
+
+function makeDateWithClampedDay(y, m, day, h, min, s, ms) {
+  const lastDay = new Date(y, m + 1, 0).getDate();
+  const clampedDay = Math.min(day, lastDay);
+  return new Date(y, m, clampedDay, h, min, s, ms);
+}
+
+function makeCycleKey(start, end) {
+  const fmt = d => d.toISOString().slice(0, 10);
+  return `${fmt(start)}_${fmt(end)}`;
+}
+
 // Approve/Reject book
 router.patch('/books/:id/status', auth, authorize('admin'), async (req, res) => {
   try {
@@ -131,86 +156,195 @@ router.get('/reports/authors/:authorId/:year/:month', auth, authorize('admin'), 
 
     const orders = await Order.find({
       paymentStatus: 'completed',
-      createdAt: { $gte: range.start, $lt: range.end }
-    }).select('authorEarningsBreakdown createdAt');
+      createdAt: { $gte: periodStart, $lt: periodEnd }
+    })
+      .populate('items.book', 'title author')
+      .populate('customer', 'name email');
 
-    // Need authors' trial end to exclude sales during the free 30-day period
+    const sales = [];
+    let totalNet = 0;
+    const authorIdStr = authorId.toString();
+
+    for (const order of orders) {
+      if (!order.items || order.items.length === 0) continue;
+
+      const orderOriginalTotal = order.items.reduce((sum, item) => sum + (item.price || 0), 0);
+      if (orderOriginalTotal <= 0) continue;
+
+      for (const item of order.items) {
+        if (!item.book || !item.book.author) continue;
+        if (item.book.author.toString() !== authorIdStr) continue;
+
+        const share = (item.price || 0) / orderOriginalTotal;
+        const pricePaid = order.totalAmount * share;
+        const platformFee = pricePaid * (PLATFORM_FEE_PERCENTAGE / 100);
+        const authorNet = pricePaid - platformFee;
+
+        totalNet += authorNet;
+
+        sales.push({
+          bookTitle: item.book.title,
+          saleDate: order.createdAt,
+          pricePaid,
+          platformFee,
+          authorNet
+        });
+      }
+    }
+
+    const totalFee = sales.reduce((s, x) => s + x.platformFee, 0);
+    const totalGross = totalNet + totalFee;
+
+    const monthPadded = String(monthNum).padStart(2, '0');
+    const fileName = `blueleafbooks-earnings-${authorId}-${yearNum}-${monthPadded}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    const margin = 40;
+    const doc = new PDFDocument({ margin });
+    doc.pipe(res);
+
+    const pageWidth = doc.page.width;
+    const contentWidth = pageWidth - margin * 2;
+
+    doc.font('Helvetica-Bold').fontSize(18)
+      .text('BlueLeafBooks – Monthly Earnings Report', margin, doc.y, { align: 'center' });
+    doc.moveTo(margin, doc.y + 6).lineTo(pageWidth - margin, doc.y + 6).lineWidth(1).strokeColor('#ddd').stroke();
+    doc.moveDown(2);
+
+    doc.font('Helvetica').fontSize(12)
+      .text(`Author: ${author.name} (${author.email})`)
+      .text(`Period: ${yearNum}-${monthPadded}`)
+      .text(`Platform Fee: ${PLATFORM_FEE_PERCENTAGE}%`);
+    doc.moveDown(1.5);
+
+    doc.font('Helvetica-Bold').fontSize(12).text('Summary:');
+    doc.font('Helvetica').fontSize(11)
+      .text(`Gross Sales: $${totalGross.toFixed(2)}`)
+      .text(`Platform Fee (${PLATFORM_FEE_PERCENTAGE}%): $${totalFee.toFixed(2)}`)
+      .text(`Net to Author: $${totalNet.toFixed(2)}`);
+    doc.moveDown(1.5);
+
+    doc.font('Helvetica-Bold').fontSize(12).text('Sales breakdown:');
+    doc.moveDown(0.75);
+
+    if (sales.length === 0) {
+      doc.font('Helvetica').fontSize(11).text('No sales for this period.');
+    } else {
+      doc.font('Helvetica').fontSize(10);
+      for (const s of sales) {
+        const d = new Date(s.saleDate).toLocaleDateString();
+        doc.text(`${d} | ${s.bookTitle} | Paid: $${s.pricePaid.toFixed(2)} | Fee: $${s.platformFee.toFixed(2)} | Net: $${s.authorNet.toFixed(2)}`);
+      }
+    }
+
+    doc.font('Helvetica').fontSize(9).text('Authors are responsible for their own taxes.', margin, doc.page.height - 50);
+    doc.end();
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Download platform-wide monthly PDF report (all authors, all sales)
+router.get('/reports/monthly/:year/:month', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { year, month } = req.params;
+    const yearNum = parseInt(year, 10);
+    const monthNum = parseInt(month, 10);
+
+    if (isNaN(yearNum) || isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+      return res.status(400).json({ message: 'Invalid year or month' });
+    }
+
+    const periodStart = new Date(yearNum, monthNum - 1, 1);
+    const periodEnd = new Date(yearNum, monthNum, 1);
+
+    const orders = await Order.find({
+      paymentStatus: 'completed',
+      createdAt: { $gte: periodStart, $lt: periodEnd }
+    }).select('authorEarningsBreakdown totalAmount platformEarnings createdAt');
+
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-    const authorsForTrial = await User.find({ role: 'author' })
-      .select('name email isBlocked blockedReason blockedAt payoutPaypalEmail createdAt')
-      .sort({ createdAt: -1 });
+    const authors = await User.find({ role: 'author' })
+      .select('name email createdAt')
+      .sort({ name: 1 });
 
     const trialEndsMap = new Map();
-    for (const a of authorsForTrial) {
-      const createdAt = a.createdAt ? new Date(a.createdAt) : null;
-      const trialEndsAt = createdAt ? new Date(createdAt.getTime() + THIRTY_DAYS_MS) : null;
+    for (const a of authors) {
+      const created = a.createdAt ? new Date(a.createdAt) : null;
+      const trialEndsAt = created ? new Date(created.getTime() + THIRTY_DAYS_MS) : null;
       trialEndsMap.set(String(a._id), trialEndsAt);
     }
 
     const perAuthor = new Map();
+    let totalPlatformFee = 0;
+    let totalGross = 0;
 
     for (const order of orders) {
       if (!Array.isArray(order.authorEarningsBreakdown)) continue;
       for (const row of order.authorEarningsBreakdown) {
-        const authorId = String(row.author);
-        const net = Number(row.amount || 0);
-        if (!authorId || net <= 0) continue;
-
-        const trialEndsAt = trialEndsMap.get(authorId);
-        // Skip sales that happened before the author finished the 30-day free period
+        const aid = String(row.author);
+        const trialEndsAt = trialEndsMap.get(aid);
         if (trialEndsAt && order.createdAt && new Date(order.createdAt) < trialEndsAt) continue;
 
-        const feeDue = calcFeeFromNet(net, PLATFORM_FEE_PERCENTAGE);
-        const gross = net + feeDue;
+        const net = Number(row.amount || 0);
+        if (net <= 0) continue;
 
-        const acc = perAuthor.get(authorId) || { gross: 0, net: 0, feeDue: 0, salesCount: 0 };
+        const fee = calcFeeFromNet(net, PLATFORM_FEE_PERCENTAGE);
+        const gross = net + fee;
+
+        totalPlatformFee += fee;
+        totalGross += gross;
+
+        const acc = perAuthor.get(aid) || { gross: 0, net: 0, fee: 0 };
         acc.gross += gross;
         acc.net += net;
-        acc.feeDue += feeDue;
-        acc.salesCount += 1;
-        perAuthor.set(authorId, acc);
+        acc.fee += fee;
+        perAuthor.set(aid, acc);
       }
     }
 
-    const authorsList = await User.find({ role: 'author' })
-      .select('name email isBlocked blockedReason blockedAt payoutPaypalEmail')
-      .sort({ createdAt: -1 });
+    const monthPadded = String(monthNum).padStart(2, '0');
+    const fileName = `blueleafbooks-platform-earnings-${yearNum}-${monthPadded}.pdf`;
 
-    const statuses = await PlatformFeeStatus.find({ period }).select('author isPaid paidAt note');
-    const statusMap = new Map(statuses.map(s => [String(s.author), s]));
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
 
-    const dueDate = new Date(range.year, range.month, 10); // 10th of next month (range.month is 1-12 for the period month; JS months 0-11, but here we set next month by using month index = range.month)
-    // Explanation: if period is Jan (month=1), dueDate = Feb 10 because new Date(year, 1, 10) -> Feb 10.
+    const margin = 40;
+    const doc = new PDFDocument({ margin });
+    doc.pipe(res);
 
-    const result = authorsList.map(a => {
-      const stats = perAuthor.get(String(a._id)) || { gross: 0, net: 0, feeDue: 0, salesCount: 0 };
-      const st = statusMap.get(String(a._id));
-      const isPaid = st ? !!st.isPaid : false;
-      const paidAt = st ? st.paidAt : null;
+    const pageWidth = doc.page.width;
+    const contentWidth = pageWidth - margin * 2;
 
-      const now = new Date();
-      const isOverdue = !isPaid && now >= dueDate;
+    doc.font('Helvetica-Bold').fontSize(18)
+      .text('BlueLeafBooks – Platform Monthly Report', margin, doc.y, { align: 'center' });
+    doc.moveTo(margin, doc.y + 6).lineTo(pageWidth - margin, doc.y + 6).lineWidth(1).strokeColor('#ddd').stroke();
+    doc.moveDown(2);
 
-      return {
-        authorId: a._id,
-        name: a.name,
-        email: a.email,
-        isBlocked: a.isBlocked,
-        blockedReason: a.blockedReason,
-        blockedAt: a.blockedAt,
-        period,
-        dueDate,
-        grossSales: Number(stats.gross.toFixed(2)),
-        authorNet: Number(stats.net.toFixed(2)),
-        platformFeeDue: Number(stats.feeDue.toFixed(2)),
-        salesCount: stats.salesCount,
-        isPaid,
-        paidAt,
-        isOverdue
-      };
-    });
+    doc.font('Helvetica').fontSize(12)
+      .text(`Period: ${yearNum}-${monthPadded}`)
+      .text(`Platform Fee: ${PLATFORM_FEE_PERCENTAGE}%`);
+    doc.moveDown(1.5);
 
-    res.json({ period, dueDate, feePercentage: PLATFORM_FEE_PERCENTAGE, rows: result });
+    doc.font('Helvetica-Bold').fontSize(12).text('Summary:');
+    doc.font('Helvetica').fontSize(11)
+      .text(`Total Gross: $${totalGross.toFixed(2)}`)
+      .text(`Total Platform Fee: $${totalPlatformFee.toFixed(2)}`);
+    doc.moveDown(1.5);
+
+    doc.font('Helvetica-Bold').fontSize(12).text('Per Author:');
+    doc.moveDown(0.5);
+    doc.font('Helvetica').fontSize(10);
+
+    for (const a of authors) {
+      const stats = perAuthor.get(String(a._id)) || { gross: 0, net: 0, fee: 0 };
+      if (stats.gross <= 0) continue;
+      doc.text(`${a.name} | Gross: $${stats.gross.toFixed(2)} | Fee: $${stats.fee.toFixed(2)} | Net: $${stats.net.toFixed(2)}`);
+    }
+
+    doc.end();
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -421,6 +555,121 @@ router.post('/cycle-fees/:authorId/mark-unpaid', auth, authorize('admin'), async
     );
 
     res.json({ success: true, status });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get all authors (admin)
+router.get('/authors', auth, authorize('admin'), async (req, res) => {
+  try {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const now = new Date();
+
+    const authors = await User.find({ role: 'author' })
+      .select('name email payoutPaypalEmail createdAt isBlocked blockedReason blockedAt')
+      .sort({ createdAt: -1 });
+
+    const result = authors.map(a => {
+      const createdAt = a.createdAt ? new Date(a.createdAt) : null;
+      const trialEndsAt = createdAt ? new Date(createdAt.getTime() + THIRTY_DAYS_MS) : null;
+      const isInFirst30Days = trialEndsAt ? now < trialEndsAt : false;
+      const daysUntilFee = isInFirst30Days && trialEndsAt
+        ? Math.ceil((trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+        : 0;
+
+      return {
+        _id: a._id,
+        name: a.name,
+        email: a.email,
+        payoutPaypalEmail: a.payoutPaypalEmail || '',
+        createdAt: a.createdAt,
+        isBlocked: !!a.isBlocked,
+        blockedReason: a.blockedReason || '',
+        blockedAt: a.blockedAt || null,
+        isInFirst30Days,
+        trialEndsAt,
+        daysUntilFee
+      };
+    });
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get fee status by calendar period (YYYY-MM) - for Platform Fees section
+router.get('/fees', auth, authorize('admin'), async (req, res) => {
+  try {
+    const period = (req.query.period || '').trim() || previousMonthPeriod();
+    const range = periodRange(period);
+    if (!range) {
+      return res.status(400).json({ message: 'Invalid period. Use YYYY-MM.' });
+    }
+
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const authors = await User.find({ role: 'author' })
+      .select('name email payoutPaypalEmail createdAt isBlocked blockedReason blockedAt')
+      .sort({ createdAt: -1 });
+
+    const statuses = await PlatformFeeStatus.find({ period }).select('author isPaid paidAt note');
+    const statusMap = new Map(statuses.map(s => [String(s.author), s]));
+
+    const dueDate = new Date(range.year, range.month, 10);
+
+    const rows = [];
+    for (const author of authors) {
+      const createdAt = author.createdAt ? new Date(author.createdAt) : null;
+      const trialEndsAt = createdAt ? new Date(createdAt.getTime() + THIRTY_DAYS_MS) : null;
+      const effectiveStart = trialEndsAt && trialEndsAt > range.start ? trialEndsAt : range.start;
+
+      let grossSales = 0;
+      let feeDue = 0;
+
+      if (effectiveStart < range.end) {
+        const orders = await Order.find({
+          paymentStatus: 'completed',
+          createdAt: { $gte: effectiveStart, $lt: range.end },
+          'authorEarningsBreakdown.author': author._id
+        }).select('authorEarningsBreakdown createdAt');
+
+        for (const order of orders) {
+          if (!Array.isArray(order.authorEarningsBreakdown)) continue;
+          const row = order.authorEarningsBreakdown.find(r => String(r.author) === String(author._id));
+          if (!row) continue;
+          const net = Number(row.amount || 0);
+          if (net <= 0) continue;
+          const fee = calcFeeFromNet(net, PLATFORM_FEE_PERCENTAGE);
+          feeDue += fee;
+          grossSales += net + fee;
+        }
+      }
+
+      const statusDoc = statusMap.get(String(author._id));
+      const isPaid = statusDoc ? !!statusDoc.isPaid : false;
+      const now = new Date();
+      const isOverdue = !isPaid && now >= dueDate;
+
+      rows.push({
+        authorId: author._id,
+        name: author.name,
+        email: author.email,
+        payoutPaypalEmail: author.payoutPaypalEmail || '',
+        grossSales: Number(grossSales.toFixed(2)),
+        platformFeeDue: Number(feeDue.toFixed(2)),
+        isPaid,
+        isOverdue,
+        isBlocked: !!author.isBlocked
+      });
+    }
+
+    res.json({
+      period,
+      dueDate,
+      feePercentage: PLATFORM_FEE_PERCENTAGE,
+      rows
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
