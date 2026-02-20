@@ -1,14 +1,15 @@
 const nodemailer = require('nodemailer');
 
 function createTransport() {
-  // Use environment-based config; supports common local dev setups.
-  // For example, configure:
   // EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASS, EMAIL_FROM
+  // For Hotmail/Outlook: smtp-mail.outlook.com, port 587
+  // Microsoft may require App Password: https://account.microsoft.com/security
+  const hasAuth = process.env.EMAIL_USER && process.env.EMAIL_PASS;
   return nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    host: process.env.EMAIL_HOST || 'smtp-mail.outlook.com',
     port: parseInt(process.env.EMAIL_PORT || '587', 10),
-    secure: process.env.EMAIL_SECURE === 'true',
-    auth: process.env.EMAIL_USER && process.env.EMAIL_PASS ? {
+    secure: false,
+    auth: hasAuth ? {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
     } : undefined
