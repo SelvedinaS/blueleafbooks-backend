@@ -53,8 +53,8 @@ router.post('/', auth, authorize('customer'), async (req, res) => {
       authorEarningsMap[authorId] += authorEarning;
     }
 
-    // paidOut=true only when PAYPAL_SEND_TO_AUTHORS (authors receive directly). Otherwise platform receives, paidOut=false.
-    const authorsReceiveDirectly = process.env.PAYPAL_SEND_TO_AUTHORS === 'true';
+    // paidOut=true when authors receive directly (PAYPAL_SEND_TO_AUTHORS not false). Otherwise platform receives, paidOut=false.
+    const authorsReceiveDirectly = process.env.PAYPAL_SEND_TO_AUTHORS !== 'false';
     const authorEarningsBreakdown = Object.entries(authorEarningsMap).map(([author, amount]) => ({
       author,
       amount,

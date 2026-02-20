@@ -31,12 +31,15 @@ function client() {
 /**
  * Create PayPal order.
  *
- * PAYPAL_SEND_TO_AUTHORS=true: Payment goes to author(s) via payee (requires PayPal Commerce Platform).
- * PAYPAL_SEND_TO_AUTHORS=false/unset: Payment goes to platform (default, works with standard API).
+ * PAYPAL_SEND_TO_AUTHORS=true: Payment goes directly to author(s) via payee.
+ * PAYPAL_SEND_TO_AUTHORS=false: Payment goes to platform.
+ *
+ * For direct-to-author: PayPal app must be type "Platform" (marketplace), not "Merchant".
+ * Each author must set their PayPal email in Author Dashboard → Payout settings.
  *
  * Frontend sends: items: [{ bookId }], optional discountCode
  */
-const SEND_TO_AUTHORS = process.env.PAYPAL_SEND_TO_AUTHORS === 'true';
+const SEND_TO_AUTHORS = process.env.PAYPAL_SEND_TO_AUTHORS !== 'false';
 
 router.post('/create-order', auth, authorize('customer'), async (req, res) => {
   try {
@@ -79,7 +82,7 @@ router.post('/create-order', auth, authorize('customer'), async (req, res) => {
       if (authorsWithoutPaypal.length > 0) {
         const names = authorsWithoutPaypal.map(a => a.name || 'Author').join(', ');
         return res.status(400).json({
-          message: `The following author(s) have not set their PayPal email: ${names}. Add PAYPAL_SEND_TO_AUTHORS=false in backend .env to use platform payment.`
+          message: `The following author(s) have not set their PayPal email: ${names}. They must add it in Author Dashboard → Payout settings.`
         });
       }
 
