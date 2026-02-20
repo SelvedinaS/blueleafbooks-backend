@@ -29,15 +29,15 @@ function client() {
 }
 
 /**
- * Create PayPal order – payment goes DIRECTLY to author(s), not to platform.
- * Platform fee (10%) is paid by authors monthly to the platform.
+ * Create PayPal order.
  *
- * Frontend sends:
- *  - items: [{ bookId }]
- *  - optional discountCode
+ * PAYPAL_SEND_TO_AUTHORS=true: Payment goes to author(s) via payee (requires PayPal Commerce Platform).
+ * PAYPAL_SEND_TO_AUTHORS=false/unset: Payment goes to platform (default, works with standard API).
  *
- * We calculate totals server-side to prevent price tampering.
+ * Frontend sends: items: [{ bookId }], optional discountCode
  */
+const SEND_TO_AUTHORS = process.env.PAYPAL_SEND_TO_AUTHORS === 'true';
+
 router.post('/create-order', auth, authorize('customer'), async (req, res) => {
   try {
     const { items, discountCode } = req.body;
@@ -58,61 +58,58 @@ router.post('/create-order', auth, authorize('customer'), async (req, res) => {
       return res.status(400).json({ message: 'Invalid amount' });
     }
 
-    // Group amounts by author (using discounted prices)
-    const authorAmounts = {};
-    for (const book of pricing.books) {
-      const authorId = book.author.toString();
-      const discItem = pricing.discountedItems.find(i => i.bookId.toString() === book._id.toString());
-      const discPrice = discItem ? discItem.discountedPrice : Number(book.price || 0);
-      authorAmounts[authorId] = (authorAmounts[authorId] || 0) + discPrice;
-    }
+    let purchaseUnits;
 
-    const authorIds = Object.keys(authorAmounts);
-    const authors = await User.find({ _id: { $in: authorIds } })
-      .select('_id name payoutPaypalEmail')
-      .lean();
+    if (SEND_TO_AUTHORS) {
+      // Payment goes directly to authors – requires PayPal Commerce Platform / partner onboarding
+      const authorAmounts = {};
+      for (const book of pricing.books) {
+        const authorId = book.author.toString();
+        const discItem = pricing.discountedItems.find(i => i.bookId.toString() === book._id.toString());
+        const discPrice = discItem ? discItem.discountedPrice : Number(book.price || 0);
+        authorAmounts[authorId] = (authorAmounts[authorId] || 0) + discPrice;
+      }
 
-    const authorsWithoutPaypal = authors.filter(a => !a.payoutPaypalEmail || !a.payoutPaypalEmail.trim());
-    if (authorsWithoutPaypal.length > 0) {
-      const names = authorsWithoutPaypal.map(a => a.name || 'Author').join(', ');
-      return res.status(400).json({
-        message: `The following author(s) have not set their PayPal email for payouts: ${names}. Purchase is not possible until they add it in their dashboard.`
-      });
-    }
+      const authorIds = Object.keys(authorAmounts);
+      const authors = await User.find({ _id: { $in: authorIds } })
+        .select('_id name payoutPaypalEmail')
+        .lean();
 
-    const authorMap = Object.fromEntries(authors.map(a => [a._id.toString(), a]));
+      const authorsWithoutPaypal = authors.filter(a => !a.payoutPaypalEmail || !a.payoutPaypalEmail.trim());
+      if (authorsWithoutPaypal.length > 0) {
+        const names = authorsWithoutPaypal.map(a => a.name || 'Author').join(', ');
+        return res.status(400).json({
+          message: `The following author(s) have not set their PayPal email: ${names}. Add PAYPAL_SEND_TO_AUTHORS=false in backend .env to use platform payment.`
+        });
+      }
 
-    // Build one purchase_unit per author – each receives their share directly
-    const purchaseUnits = [];
-    const amounts = Object.entries(authorAmounts);
-    let runningTotal = 0;
-    for (let i = 0; i < amounts.length; i++) {
-      const [authorId, amt] = amounts[i];
-      const author = authorMap[authorId];
-      const isLast = i === amounts.length - 1;
-      const value = isLast
-        ? (pricing.total - runningTotal).toFixed(2)
-        : amt.toFixed(2);
-      runningTotal += parseFloat(value);
-
-      purchaseUnits.push({
-        amount: {
-          currency_code: 'USD',
-          value
-        },
-        payee: {
-          email_address: author.payoutPaypalEmail.trim().toLowerCase()
-        },
-        description: `Book(s) from ${author.name || 'author'} via BlueLeafBooks`
-      });
+      const authorMap = Object.fromEntries(authors.map(a => [a._id.toString(), a]));
+      purchaseUnits = [];
+      const amounts = Object.entries(authorAmounts);
+      let runningTotal = 0;
+      for (let i = 0; i < amounts.length; i++) {
+        const [authorId, amt] = amounts[i];
+        const author = authorMap[authorId];
+        const isLast = i === amounts.length - 1;
+        const value = isLast ? (pricing.total - runningTotal).toFixed(2) : amt.toFixed(2);
+        runningTotal += parseFloat(value);
+        purchaseUnits.push({
+          amount: { currency_code: 'USD', value },
+          payee: { email_address: author.payoutPaypalEmail.trim().toLowerCase() },
+          description: `Book(s) from ${author.name || 'author'} via BlueLeafBooks`
+        });
+      }
+    } else {
+      // Default: payment goes to platform (works with standard PayPal API)
+      purchaseUnits = [{
+        amount: { currency_code: 'USD', value: pricing.total.toFixed(2) },
+        description: `Purchase of ${pricing.books.length} book(s) from BlueLeafBooks`
+      }];
     }
 
     const request = new paypal.orders.OrdersCreateRequest();
     request.prefer('return=representation');
-    request.requestBody({
-      intent: 'CAPTURE',
-      purchase_units: purchaseUnits
-    });
+    request.requestBody({ intent: 'CAPTURE', purchase_units: purchaseUnits });
 
     const order = await client().execute(request);
 

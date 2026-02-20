@@ -53,11 +53,12 @@ router.post('/', auth, authorize('customer'), async (req, res) => {
       authorEarningsMap[authorId] += authorEarning;
     }
 
-    // Authors receive payment directly via PayPal (payee). paidOut=true since no manual payout by platform.
+    // paidOut=true only when PAYPAL_SEND_TO_AUTHORS (authors receive directly). Otherwise platform receives, paidOut=false.
+    const authorsReceiveDirectly = process.env.PAYPAL_SEND_TO_AUTHORS === 'true';
     const authorEarningsBreakdown = Object.entries(authorEarningsMap).map(([author, amount]) => ({
       author,
       amount,
-      paidOut: true // Money went directly to author's PayPal; platform fee is paid by author monthly
+      paidOut: authorsReceiveDirectly
     }));
 
     // Create order
