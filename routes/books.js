@@ -1,38 +1,17 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const Book = require('../models/Book');
 const { auth, authorize } = require('../middleware/auth');
+const { uploadToSpaces } = require('../config/spaces');
 
 const router = express.Router();
 
-// Ensure upload folders exist (Render/Linux is case-sensitive and folders may not exist by default)
-const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
-const BOOKS_DIR = path.join(UPLOADS_DIR, 'books');
-const COVERS_DIR = path.join(UPLOADS_DIR, 'covers');
-fs.mkdirSync(BOOKS_DIR, { recursive: true });
-fs.mkdirSync(COVERS_DIR, { recursive: true });
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    if (file.fieldname === 'pdfFile') {
-      cb(null, BOOKS_DIR);
-    } else if (file.fieldname === 'coverImage') {
-      cb(null, COVERS_DIR);
-    } else {
-      cb(new Error('Unknown upload field'));
-    }
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
-});
+// Multer memory storage - files stay in RAM, we upload to DigitalOcean Spaces
+const storage = multer.memoryStorage();
 
 const upload = multer({
-  storage: storage,
+  storage,
   limits: {
     fileSize: 50 * 1024 * 1024 // 50MB limit
   },
@@ -54,6 +33,15 @@ const upload = multer({
     }
   }
 });
+
+/**
+ * Generate unique key for Spaces (folder/filename)
+ */
+function makeSpacesKey(folder, originalName, ext) {
+  const unique = Date.now() + '-' + Math.round(Math.random() * 1E9);
+  const safeExt = ext || path.extname(originalName || '') || '.bin';
+  return `blueleafbooks/${folder}/${unique}${safeExt}`;
+}
 
 // Get all books (public, with filters)
 router.get('/', async (req, res) => {
@@ -188,9 +176,22 @@ router.post('/', auth, authorize('author'), upload.fields([
       return res.status(400).json({ message: 'PDF file and cover image are required' });
     }
 
-    // Store RELATIVE paths so the frontend can build URLs like: FILE_BASE_URL + '/' + pdfFile
-    const pdfRelPath = `uploads/books/${req.files.pdfFile[0].filename}`;
-    const coverRelPath = `uploads/covers/${req.files.coverImage[0].filename}`;
+    const coverFile = req.files.coverImage[0];
+    const pdfFile = req.files.pdfFile[0];
+
+    // Upload to DigitalOcean Spaces
+    const [coverUrl, pdfUrl] = await Promise.all([
+      uploadToSpaces(
+        coverFile.buffer,
+        makeSpacesKey('covers', coverFile.originalname, path.extname(coverFile.originalname)),
+        coverFile.mimetype
+      ),
+      uploadToSpaces(
+        pdfFile.buffer,
+        makeSpacesKey('books', pdfFile.originalname, '.pdf'),
+        'application/pdf'
+      )
+    ]);
 
     const book = new Book({
       title,
@@ -198,16 +199,18 @@ router.post('/', auth, authorize('author'), upload.fields([
       genre,
       price: parseFloat(price),
       author: req.user._id,
-      pdfFile: pdfRelPath,
-      coverImage: coverRelPath,
-      status: (req.user?.payoutPaypalEmail ? 'approved' : 'pending')});
+      pdfFile: pdfUrl,
+      coverImage: coverUrl,
+      status: (req.user?.payoutPaypalEmail ? 'approved' : 'pending')
+    });
 
     await book.save();
     await book.populate('author', 'name email');
 
     res.status(201).json(book);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Book create error:', error);
+    res.status(500).json({ message: error.message || 'Failed to create book' });
   }
 });
 
@@ -232,21 +235,27 @@ router.put('/:id', auth, authorize('author'), upload.fields([
 
     const { title, description, genre, price } = req.body;
 
-    // Publishing is restricted if the author is blocked (e.g., unpaid platform fee)
-    if (req.user?.isBlocked) {
-      return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to publish books.' });
-    }
-
     if (title) book.title = title;
     if (description) book.description = description;
     if (genre) book.genre = genre;
     if (price) book.price = parseFloat(price);
 
-    if (req.files?.pdfFile?.[0]) {
-      book.pdfFile = `uploads/books/${req.files.pdfFile[0].filename}`;
-    }
+    // Upload new files to Spaces if provided
     if (req.files?.coverImage?.[0]) {
-      book.coverImage = `uploads/covers/${req.files.coverImage[0].filename}`;
+      const f = req.files.coverImage[0];
+      book.coverImage = await uploadToSpaces(
+        f.buffer,
+        makeSpacesKey('covers', f.originalname, path.extname(f.originalname)),
+        f.mimetype
+      );
+    }
+    if (req.files?.pdfFile?.[0]) {
+      const f = req.files.pdfFile[0];
+      book.pdfFile = await uploadToSpaces(
+        f.buffer,
+        makeSpacesKey('books', f.originalname, '.pdf'),
+        'application/pdf'
+      );
     }
 
     book.updatedAt = Date.now();
@@ -256,7 +265,8 @@ router.put('/:id', auth, authorize('author'), upload.fields([
 
     res.json(book);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Book update error:', error);
+    res.status(500).json({ message: error.message || 'Failed to update book' });
   }
 });
 

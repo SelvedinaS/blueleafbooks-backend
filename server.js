@@ -19,7 +19,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files
+// Serve uploaded files (legacy only - new uploads go to DigitalOcean Spaces)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
