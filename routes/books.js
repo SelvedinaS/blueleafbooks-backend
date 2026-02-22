@@ -62,12 +62,13 @@ const upload = multer({
 });
 
 /**
- * Generate unique key for Spaces (folder/filename)
+ * Generate unique key for Spaces (folder/filename).
+ * Key is folder/filename only - bucket is in hostname (virtual-hosted style).
  */
 function makeSpacesKey(folder, originalName, ext) {
   const unique = Date.now() + '-' + Math.round(Math.random() * 1E9);
   const safeExt = ext || path.extname(originalName || '') || '.bin';
-  return `blueleafbooks/${folder}/${unique}${safeExt}`;
+  return `${folder}/${unique}${safeExt}`;
 }
 
 const { ensureFullUrls, ensureFullUrlsMany } = require('../utils/fileUrls');
