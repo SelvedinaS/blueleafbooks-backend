@@ -179,20 +179,6 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
     const platformFeeToShow = isInFirst30Days ? 0 : lastMonthFeeDue;
     const grossSalesToShow = isInFirst30Days ? 0 : lastMonthGrossSales;
 
-    // PayPal gate: books visible only when author has PayPal set
-    const hasPaypal = !!(user.payoutPaypalEmail && user.payoutPaypalEmail.trim() !== '');
-    if (hasPaypal) {
-      await Book.updateMany(
-        { author: req.user._id, isDeleted: false, status: 'pending' },
-        { $set: { status: 'approved' } }
-      );
-    } else {
-      await Book.updateMany(
-        { author: req.user._id, isDeleted: false, status: 'approved' },
-        { $set: { status: 'pending' } }
-      );
-    }
-
     res.json({
       books: books.length,
       totalSales,
@@ -254,20 +240,6 @@ router.get('/payout-settings', auth, authorize('author'), async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('payoutPaypalEmail');
 
-    // PayPal gate: sync book status when fetching settings
-    const hasPaypal = !!(user.payoutPaypalEmail && user.payoutPaypalEmail.trim() !== '');
-    if (hasPaypal) {
-      await Book.updateMany(
-        { author: req.user._id, isDeleted: false, status: 'pending' },
-        { $set: { status: 'approved' } }
-      );
-    } else {
-      await Book.updateMany(
-        { author: req.user._id, isDeleted: false, status: 'approved' },
-        { $set: { status: 'pending' } }
-      );
-    }
-
     res.json({
       payoutPaypalEmail: user.payoutPaypalEmail || ''
     });
@@ -294,20 +266,6 @@ router.post('/payout-settings', auth, authorize('author'), async (req, res) => {
       { payoutPaypalEmail: payoutPaypalEmail ? payoutPaypalEmail.trim().toLowerCase() : null },
       { new: true }
     ).select('name email payoutPaypalEmail');
-
-    // PayPal gate: sync book visibility when PayPal changes
-    const hasPaypal = !!(user.payoutPaypalEmail && user.payoutPaypalEmail.trim() !== '');
-    if (hasPaypal) {
-      await Book.updateMany(
-        { author: req.user._id, isDeleted: false, status: 'pending' },
-        { $set: { status: 'approved' } }
-      );
-    } else {
-      await Book.updateMany(
-        { author: req.user._id, isDeleted: false, status: 'approved' },
-        { $set: { status: 'pending' } }
-      );
-    }
 
     res.json({
       message: 'Payout settings updated successfully',

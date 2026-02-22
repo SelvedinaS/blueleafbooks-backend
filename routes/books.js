@@ -77,8 +77,8 @@ router.get('/', async (req, res) => {
   try {
     const { genre, search, sortBy = 'createdAt', order = 'desc', minPrice, maxPrice } = req.query;
 
-    // Public catalog: only approved books (author must have PayPal set)
-    let query = { isDeleted: false, status: 'approved' };
+    // Public catalog: all non-deleted books
+    let query = { isDeleted: false };
 
     if (genre) query.genre = genre;
     if (search) query.$text = { $search: search };
@@ -123,7 +123,7 @@ router.get('/genres/list', async (req, res) => {
 // Get best sellers
 router.get('/featured/bestsellers', async (req, res) => {
   try {
-    const booksRaw = await Book.find({ isDeleted: false, status: 'approved' })
+    const booksRaw = await Book.find({ isDeleted: false })
       .sort({ salesCount: -1 })
       .limit(10)
       .populate('author', 'name email isBlocked');
@@ -139,7 +139,7 @@ router.get('/featured/bestsellers', async (req, res) => {
 // Get newly added
 router.get('/featured/new', async (req, res) => {
   try {
-    const booksRaw = await Book.find({ isDeleted: false, status: 'approved' })
+    const booksRaw = await Book.find({ isDeleted: false })
       .sort({ createdAt: -1 })
       .limit(10)
       .populate('author', 'name email isBlocked');
@@ -155,7 +155,7 @@ router.get('/featured/new', async (req, res) => {
 // Curated featured books: manually selected by admin (isFeatured + featuredOrder)
 router.get('/featured/curated', async (req, res) => {
   try {
-    const booksRaw = await Book.find({ isDeleted: false, status: 'approved', isFeatured: true })
+    const booksRaw = await Book.find({ isDeleted: false, isFeatured: true })
       .sort({ featuredOrder: 1, createdAt: -1 })
       .limit(12)
       .populate('author', 'name email isBlocked');
@@ -201,10 +201,10 @@ router.post('/', auth, authorize('author'), upload.fields([
       return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to publish books.' });
     }
 
-    // PayPal required: books can only be published when author has set payout email
+    // PayPal required for publishing (earnings must go somewhere)
     const user = await User.findById(req.user._id).select('payoutPaypalEmail');
     if (!user?.payoutPaypalEmail || !String(user.payoutPaypalEmail).trim()) {
-      return res.status(403).json({ message: 'You must set your PayPal email before publishing books. Go to Payout Settings or add it below.' });
+      return res.status(403).json({ message: 'You must set your PayPal email before publishing books. Go to Dashboard → Payout Settings.' });
     }
 
     if (!req.files?.pdfFile?.[0] || !req.files?.coverImage?.[0]) {
@@ -266,10 +266,10 @@ router.put('/:id', auth, authorize('author'), upload.fields([
       return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to edit books.' });
     }
 
-    // PayPal required for editing (keeps book visible)
+    // PayPal required for editing
     const user = await User.findById(req.user._id).select('payoutPaypalEmail');
     if (!user?.payoutPaypalEmail || !String(user.payoutPaypalEmail).trim()) {
-      return res.status(403).json({ message: 'You must set your PayPal email before editing books. Go to Payout Settings or add it below.' });
+      return res.status(403).json({ message: 'You must set your PayPal email before editing books. Go to Dashboard → Payout Settings.' });
     }
 
     const book = await Book.findById(req.params.id);
