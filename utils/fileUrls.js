@@ -1,14 +1,18 @@
 /**
  * Ensure coverImage and pdfFile are full URLs (relative -> absolute).
- * Local paths like uploads/covers/xxx.jpg -> /api/files/cover/xxx.jpg (more reliable on Render).
+ * Local paths -> /api/files/... . Spaces URLs -> /api/proxy-image?url=... (avoids CORS/referrer).
  */
 const BACKEND_BASE = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || 'https://blueleafbooks-backend-geum.onrender.com';
 
 function toFullUrl(val) {
   if (!val || typeof val !== 'string') return val;
-  if (/^https?:\/\//i.test(val)) return val;
   const base = BACKEND_BASE.replace(/\/$/, '');
-  // Route local uploads through /api/files for better compatibility
+  // Spaces URLs: proxy through backend to avoid CORS/referrer issues
+  if (/^https?:\/\//i.test(val) && val.includes('digitaloceanspaces.com')) {
+    return `${base}/api/proxy-image?url=${encodeURIComponent(val)}`;
+  }
+  if (/^https?:\/\//i.test(val)) return val;
+  // Local uploads
   const coversMatch = val.match(/uploads\/covers\/(.+)$/);
   if (coversMatch) return `${base}/api/files/cover/${coversMatch[1]}`;
   const booksMatch = val.match(/uploads\/books\/(.+)$/);
