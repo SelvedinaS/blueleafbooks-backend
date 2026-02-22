@@ -11,10 +11,11 @@
 
 | Variable | Value |
 |----------|-------|
-| `SPACES_BUCKET` | ime tvog Space-a |
-| `SPACES_KEY` | Access Key |
-| `SPACES_SECRET` | Secret Key |
-| `SPACES_REGION` | npr. `nyc3` ili `fra1` |
+| `SPACES_BUCKET` ili `DO_SPACES_BUCKET` | ime tvog Space-a |
+| `SPACES_KEY` ili `DO_SPACES_KEY` | Access Key |
+| `SPACES_SECRET` ili `DO_SPACES_SECRET` | Secret Key |
+| `SPACES_REGION` ili `DO_SPACES_REGION` | npr. `nyc3` ili `fra1` |
+| `DO_SPACES_PUBLIC_BASE_URL` | **VAŽNO** – npr. `https://blueleafbooks.fra1.digitaloceanspaces.com` |
 
 5. Redeploy backend
 

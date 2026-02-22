@@ -23,11 +23,10 @@ function isSpacesConfigured() {
 
 /**
  * Get public URL for an object in Spaces
- * Format: https://{bucket}.{region}.digitaloceanspaces.com/{key}
- * Or use SPACES_PUBLIC_URL if custom CDN/domain is configured
+ * Use DO_SPACES_PUBLIC_BASE_URL or SPACES_PUBLIC_URL (e.g. https://bucket.fra1.digitaloceanspaces.com)
  */
 function getPublicUrl(key) {
-  const base = process.env.SPACES_PUBLIC_URL || process.env.DO_SPACES_PUBLIC_URL || `https://${BUCKET}.${region}.digitaloceanspaces.com`;
+  const base = process.env.DO_SPACES_PUBLIC_BASE_URL || process.env.SPACES_PUBLIC_URL || process.env.DO_SPACES_PUBLIC_URL || `https://${BUCKET}.${region}.digitaloceanspaces.com`;
   return `${base.replace(/\/$/, '')}/${key.replace(/^\//, '')}`;
 }
 
@@ -38,12 +37,12 @@ function getPublicUrl(key) {
  * @param {string} contentType - MIME type (e.g. 'image/jpeg', 'application/pdf')
  */
 async function uploadToSpaces(buffer, key, contentType) {
-  // Note: Spaces ignores ACL on PutObject. Set bucket to "Public" or "File Listing" in DO dashboard.
   await s3Client.send(new PutObjectCommand({
     Bucket: BUCKET,
     Key: key,
     Body: buffer,
-    ContentType: contentType
+    ContentType: contentType,
+    ACL: 'public-read'
   }));
   return getPublicUrl(key);
 }
