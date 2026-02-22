@@ -23,6 +23,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
+app.use('/api/files', require('./routes/files'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/books', require('./routes/books'));
 app.use('/api/cart', require('./routes/cart'));
@@ -34,11 +35,21 @@ app.use('/api/admin', require('./routes/admin'));
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'BlueLeafBooks API is running' });
+  const { isSpacesConfigured } = require('./config/spaces');
+  res.json({
+    status: 'OK',
+    message: 'BlueLeafBooks API is running',
+    storage: isSpacesConfigured() ? 'spaces' : 'local'
+  });
 });
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
+  const { isSpacesConfigured } = require('./config/spaces');
   console.log(`Server running on port ${PORT}`);
+  if (!isSpacesConfigured()) {
+    console.warn('⚠️  DigitalOcean Spaces NOT configured. Uploads use local disk and will be LOST on restart.');
+    console.warn('   Set SPACES_BUCKET, SPACES_KEY, SPACES_SECRET in Render env vars for persistent images.');
+  }
 });

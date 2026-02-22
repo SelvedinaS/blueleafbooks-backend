@@ -1,13 +1,19 @@
 /**
  * Ensure coverImage and pdfFile are full URLs (relative -> absolute).
- * Used when returning book data to frontend.
+ * Local paths like uploads/covers/xxx.jpg -> /api/files/cover/xxx.jpg (more reliable on Render).
  */
 const BACKEND_BASE = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || 'https://blueleafbooks-backend-geum.onrender.com';
 
 function toFullUrl(val) {
   if (!val || typeof val !== 'string') return val;
   if (/^https?:\/\//i.test(val)) return val;
-  return `${BACKEND_BASE.replace(/\/$/, '')}/${val.replace(/^\/+/, '')}`;
+  const base = BACKEND_BASE.replace(/\/$/, '');
+  // Route local uploads through /api/files for better compatibility
+  const coversMatch = val.match(/uploads\/covers\/(.+)$/);
+  if (coversMatch) return `${base}/api/files/cover/${coversMatch[1]}`;
+  const booksMatch = val.match(/uploads\/books\/(.+)$/);
+  if (booksMatch) return `${base}/api/files/book/${booksMatch[1]}`;
+  return `${base}/${val.replace(/^\/+/, '')}`;
 }
 
 function ensureFullUrls(book) {
