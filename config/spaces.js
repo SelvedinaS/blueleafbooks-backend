@@ -1,19 +1,25 @@
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
-const region = process.env.SPACES_REGION || 'nyc3';
-const endpoint = `https://${region}.digitaloceanspaces.com`;
+// Support both SPACES_* and DO_SPACES_* env var names
+const BUCKET = process.env.SPACES_BUCKET || process.env.DO_SPACES_BUCKET;
+const region = process.env.SPACES_REGION || process.env.DO_SPACES_REGION || 'nyc3';
+const endpoint = process.env.SPACES_ENDPOINT || process.env.DO_SPACES_ENDPOINT || `https://${region}.digitaloceanspaces.com`;
+const accessKey = process.env.SPACES_KEY || process.env.DO_SPACES_KEY;
+const secretKey = process.env.SPACES_SECRET || process.env.DO_SPACES_SECRET;
 
 const s3Client = new S3Client({
   endpoint,
   region: 'us-east-1',
   forcePathStyle: false,
   credentials: {
-    accessKeyId: process.env.SPACES_KEY,
-    secretAccessKey: process.env.SPACES_SECRET
+    accessKeyId: accessKey,
+    secretAccessKey: secretKey
   }
 });
 
-const BUCKET = process.env.SPACES_BUCKET;
+function isSpacesConfigured() {
+  return !!(BUCKET && accessKey && secretKey);
+}
 
 /**
  * Get public URL for an object in Spaces
@@ -21,7 +27,7 @@ const BUCKET = process.env.SPACES_BUCKET;
  * Or use SPACES_PUBLIC_URL if custom CDN/domain is configured
  */
 function getPublicUrl(key) {
-  const base = process.env.SPACES_PUBLIC_URL || `https://${BUCKET}.${region}.digitaloceanspaces.com`;
+  const base = process.env.SPACES_PUBLIC_URL || process.env.DO_SPACES_PUBLIC_URL || `https://${BUCKET}.${region}.digitaloceanspaces.com`;
   return `${base.replace(/\/$/, '')}/${key.replace(/^\//, '')}`;
 }
 
@@ -42,4 +48,4 @@ async function uploadToSpaces(buffer, key, contentType) {
   return getPublicUrl(key);
 }
 
-module.exports = { s3Client, uploadToSpaces, getPublicUrl, BUCKET };
+module.exports = { s3Client, uploadToSpaces, getPublicUrl, BUCKET, isSpacesConfigured };

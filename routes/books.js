@@ -1,14 +1,40 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const Book = require('../models/Book');
 const { auth, authorize } = require('../middleware/auth');
-const { uploadToSpaces } = require('../config/spaces');
+const { uploadToSpaces, isSpacesConfigured } = require('../config/spaces');
 
 const router = express.Router();
 
-// Multer memory storage - files stay in RAM, we upload to DigitalOcean Spaces
-const storage = multer.memoryStorage();
+// Local upload dirs (fallback when Spaces not configured)
+const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+const BOOKS_DIR = path.join(UPLOADS_DIR, 'books');
+const COVERS_DIR = path.join(UPLOADS_DIR, 'covers');
+
+// Multer: memory for Spaces, disk for local fallback
+const memoryStorage = multer.memoryStorage();
+const diskStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (file.fieldname === 'pdfFile') cb(null, BOOKS_DIR);
+    else if (file.fieldname === 'coverImage') cb(null, COVERS_DIR);
+    else cb(new Error('Unknown upload field'));
+  },
+  filename: (req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, unique + path.extname(file.originalname || '.bin'));
+  }
+});
+
+const storage = isSpacesConfigured() ? memoryStorage : diskStorage;
+
+// Ensure local dirs exist when using fallback
+if (!isSpacesConfigured()) {
+  fs.mkdirSync(BOOKS_DIR, { recursive: true });
+  fs.mkdirSync(COVERS_DIR, { recursive: true });
+  console.warn('DigitalOcean Spaces not configured (SPACES_BUCKET/KEY/SECRET). Using local uploads. Set env vars for production.');
+}
 
 const upload = multer({
   storage,
@@ -179,19 +205,26 @@ router.post('/', auth, authorize('author'), upload.fields([
     const coverFile = req.files.coverImage[0];
     const pdfFile = req.files.pdfFile[0];
 
-    // Upload to DigitalOcean Spaces
-    const [coverUrl, pdfUrl] = await Promise.all([
-      uploadToSpaces(
-        coverFile.buffer,
-        makeSpacesKey('covers', coverFile.originalname, path.extname(coverFile.originalname)),
-        coverFile.mimetype
-      ),
-      uploadToSpaces(
-        pdfFile.buffer,
-        makeSpacesKey('books', pdfFile.originalname, '.pdf'),
-        'application/pdf'
-      )
-    ]);
+    let coverUrl, pdfUrl;
+    if (isSpacesConfigured()) {
+      // Upload to DigitalOcean Spaces
+      [coverUrl, pdfUrl] = await Promise.all([
+        uploadToSpaces(
+          coverFile.buffer,
+          makeSpacesKey('covers', coverFile.originalname, path.extname(coverFile.originalname)),
+          coverFile.mimetype
+        ),
+        uploadToSpaces(
+          pdfFile.buffer,
+          makeSpacesKey('books', pdfFile.originalname, '.pdf'),
+          'application/pdf'
+        )
+      ]);
+    } else {
+      // Fallback: local paths (relative for frontend fileUrl)
+      coverUrl = `uploads/covers/${coverFile.filename}`;
+      pdfUrl = `uploads/books/${pdfFile.filename}`;
+    }
 
     const book = new Book({
       title,
@@ -240,22 +273,30 @@ router.put('/:id', auth, authorize('author'), upload.fields([
     if (genre) book.genre = genre;
     if (price) book.price = parseFloat(price);
 
-    // Upload new files to Spaces if provided
+    // Upload new files if provided
     if (req.files?.coverImage?.[0]) {
       const f = req.files.coverImage[0];
-      book.coverImage = await uploadToSpaces(
-        f.buffer,
-        makeSpacesKey('covers', f.originalname, path.extname(f.originalname)),
-        f.mimetype
-      );
+      if (isSpacesConfigured()) {
+        book.coverImage = await uploadToSpaces(
+          f.buffer,
+          makeSpacesKey('covers', f.originalname, path.extname(f.originalname)),
+          f.mimetype
+        );
+      } else {
+        book.coverImage = `uploads/covers/${f.filename}`;
+      }
     }
     if (req.files?.pdfFile?.[0]) {
       const f = req.files.pdfFile[0];
-      book.pdfFile = await uploadToSpaces(
-        f.buffer,
-        makeSpacesKey('books', f.originalname, '.pdf'),
-        'application/pdf'
-      );
+      if (isSpacesConfigured()) {
+        book.pdfFile = await uploadToSpaces(
+          f.buffer,
+          makeSpacesKey('books', f.originalname, '.pdf'),
+          'application/pdf'
+        );
+      } else {
+        book.pdfFile = `uploads/books/${f.filename}`;
+      }
     }
 
     book.updatedAt = Date.now();
