@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const Book = require('../models/Book');
+const User = require('../models/User');
 const { auth, authorize } = require('../middleware/auth');
 const { uploadToSpaces, isSpacesConfigured } = require('../config/spaces');
 
@@ -74,7 +75,7 @@ router.get('/', async (req, res) => {
   try {
     const { genre, search, sortBy = 'createdAt', order = 'desc', minPrice, maxPrice } = req.query;
 
-    // Public catalog: show all non-deleted books
+    // Public catalog: only approved books (author must have PayPal set)
     let query = { isDeleted: false, status: 'approved' };
 
     if (genre) query.genre = genre;
@@ -198,6 +199,12 @@ router.post('/', auth, authorize('author'), upload.fields([
       return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to publish books.' });
     }
 
+    // PayPal required: books can only be published when author has set payout email
+    const user = await User.findById(req.user._id).select('payoutPaypalEmail');
+    if (!user?.payoutPaypalEmail || !String(user.payoutPaypalEmail).trim()) {
+      return res.status(403).json({ message: 'You must set your PayPal email before publishing books. Go to Payout Settings or add it below.' });
+    }
+
     if (!req.files?.pdfFile?.[0] || !req.files?.coverImage?.[0]) {
       return res.status(400).json({ message: 'PDF file and cover image are required' });
     }
@@ -234,7 +241,7 @@ router.post('/', auth, authorize('author'), upload.fields([
       author: req.user._id,
       pdfFile: pdfUrl,
       coverImage: coverUrl,
-      status: (req.user?.payoutPaypalEmail ? 'approved' : 'pending')
+      status: 'approved'
     });
 
     await book.save();
@@ -256,6 +263,13 @@ router.put('/:id', auth, authorize('author'), upload.fields([
     if (req.user?.isBlocked) {
       return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to edit books.' });
     }
+
+    // PayPal required for editing (keeps book visible)
+    const user = await User.findById(req.user._id).select('payoutPaypalEmail');
+    if (!user?.payoutPaypalEmail || !String(user.payoutPaypalEmail).trim()) {
+      return res.status(403).json({ message: 'You must set your PayPal email before editing books. Go to Payout Settings or add it below.' });
+    }
+
     const book = await Book.findById(req.params.id);
 
     if (!book) {

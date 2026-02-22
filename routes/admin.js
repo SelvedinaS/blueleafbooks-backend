@@ -100,7 +100,9 @@ router.get('/books', auth, authorize('admin'), async (req, res) => {
   try {
     const { status } = req.query;
     let query = {};
-    if (status && status !== 'all') {
+    if (status === 'deleted') {
+      query.isDeleted = true;
+    } else if (status && status !== 'all') {
       query.status = status;
     }
     
