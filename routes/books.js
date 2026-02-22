@@ -96,8 +96,10 @@ router.get('/', async (req, res) => {
     else sortOptions = { createdAt: order === 'asc' ? 1 : -1 };
 
     const booksRaw = await Book.find(query)
+      .select('title description genre price coverImage pdfFile rating ratingCount salesCount author isDeleted isFeatured featuredOrder status createdAt updatedAt')
       .populate('author', 'name email isBlocked')
-      .sort(sortOptions);
+      .sort(sortOptions)
+      .lean();
 
     // Filter out books whose author is blocked (unpaid fees / admin restriction)
     const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
@@ -124,9 +126,11 @@ router.get('/genres/list', async (req, res) => {
 router.get('/featured/bestsellers', async (req, res) => {
   try {
     const booksRaw = await Book.find({ isDeleted: false })
+      .select('title description genre price coverImage pdfFile rating ratingCount salesCount author isDeleted status createdAt')
       .sort({ salesCount: -1 })
       .limit(10)
-      .populate('author', 'name email isBlocked');
+      .populate('author', 'name email isBlocked')
+      .lean();
 
     // Hide blocked authors' books from public lists
     const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
@@ -140,9 +144,11 @@ router.get('/featured/bestsellers', async (req, res) => {
 router.get('/featured/new', async (req, res) => {
   try {
     const booksRaw = await Book.find({ isDeleted: false })
+      .select('title description genre price coverImage pdfFile rating ratingCount salesCount author isDeleted status createdAt')
       .sort({ createdAt: -1 })
       .limit(10)
-      .populate('author', 'name email isBlocked');
+      .populate('author', 'name email isBlocked')
+      .lean();
 
     const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
     res.json(ensureFullUrlsMany(books));
@@ -156,9 +162,11 @@ router.get('/featured/new', async (req, res) => {
 router.get('/featured/curated', async (req, res) => {
   try {
     const booksRaw = await Book.find({ isDeleted: false, isFeatured: true })
+      .select('title description genre price coverImage pdfFile rating ratingCount salesCount author isDeleted isFeatured featuredOrder status createdAt')
       .sort({ featuredOrder: 1, createdAt: -1 })
       .limit(12)
-      .populate('author', 'name email isBlocked');
+      .populate('author', 'name email isBlocked')
+      .lean();
 
     const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
     res.json(ensureFullUrlsMany(books));
@@ -171,7 +179,9 @@ router.get('/featured/curated', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const book = await Book.findById(req.params.id)
-      .populate('author', 'name email isBlocked');
+      .select('title description genre price coverImage pdfFile rating ratingCount salesCount author isDeleted isFeatured featuredOrder status createdAt updatedAt')
+      .populate('author', 'name email isBlocked')
+      .lean();
 
     if (!book || book.isDeleted) {
       return res.status(404).json({ message: 'Book not found' });

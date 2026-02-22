@@ -19,8 +19,9 @@ function toFullUrl(val) {
 function ensureFullUrls(book) {
   if (!book) return book;
   const b = book.toObject ? book.toObject() : { ...book };
-  if (b.coverImage) b.coverImage = toFullUrl(b.coverImage);
-  if (b.pdfFile) b.pdfFile = toFullUrl(b.pdfFile);
+  // Always ensure coverImage and pdfFile are full URLs (preserve if already full)
+  if (b.coverImage != null && b.coverImage !== '') b.coverImage = toFullUrl(b.coverImage);
+  if (b.pdfFile != null && b.pdfFile !== '') b.pdfFile = toFullUrl(b.pdfFile);
   return b;
 }
 
