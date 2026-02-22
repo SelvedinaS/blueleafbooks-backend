@@ -70,6 +70,8 @@ function makeSpacesKey(folder, originalName, ext) {
   return `blueleafbooks/${folder}/${unique}${safeExt}`;
 }
 
+const { ensureFullUrls, ensureFullUrlsMany } = require('../utils/fileUrls');
+
 // Get all books (public, with filters)
 router.get('/', async (req, res) => {
   try {
@@ -100,7 +102,7 @@ router.get('/', async (req, res) => {
     // Filter out books whose author is blocked (unpaid fees / admin restriction)
     const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
 
-    res.json(books);
+    res.json(ensureFullUrlsMany(books));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -128,7 +130,7 @@ router.get('/featured/bestsellers', async (req, res) => {
 
     // Hide blocked authors' books from public lists
     const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
-    res.json(books);
+    res.json(ensureFullUrlsMany(books));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -143,7 +145,7 @@ router.get('/featured/new', async (req, res) => {
       .populate('author', 'name email isBlocked');
 
     const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
-    res.json(books);
+    res.json(ensureFullUrlsMany(books));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -159,7 +161,7 @@ router.get('/featured/curated', async (req, res) => {
       .populate('author', 'name email isBlocked');
 
     const books = (booksRaw || []).filter(b => !b?.author?.isBlocked);
-    res.json(books);
+    res.json(ensureFullUrlsMany(books));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -180,7 +182,7 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ message: 'Book not found' });
     }
 
-    res.json(book);
+    res.json(ensureFullUrls(book));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -247,7 +249,7 @@ router.post('/', auth, authorize('author'), upload.fields([
     await book.save();
     await book.populate('author', 'name email');
 
-    res.status(201).json(book);
+    res.status(201).json(ensureFullUrls(book));
   } catch (error) {
     console.error('Book create error:', error);
     res.status(500).json({ message: error.message || 'Failed to create book' });
@@ -318,7 +320,7 @@ router.put('/:id', auth, authorize('author'), upload.fields([
     await book.save();
     await book.populate('author', 'name email');
 
-    res.json(book);
+    res.json(ensureFullUrls(book));
   } catch (error) {
     console.error('Book update error:', error);
     res.status(500).json({ message: error.message || 'Failed to update book' });

@@ -1,4 +1,5 @@
 const express = require('express');
+const { ensureFullUrlsMany } = require('../utils/fileUrls');
 
 const router = express.Router();
 
@@ -21,7 +22,7 @@ router.post('/validate', async (req, res) => {
       .select('_id title price coverImage author')
       .populate('author', 'name');
 
-    res.json(books);
+    res.json(ensureFullUrlsMany(books));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
