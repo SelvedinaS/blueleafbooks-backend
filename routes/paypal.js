@@ -6,11 +6,13 @@ const { calculateCartPricing } = require('../utils/pricing');
 
 const router = express.Router();
 
-// Configure PayPal environment
+const PAYPAL_MODE = (process.env.PAYPAL_MODE || 'sandbox').toLowerCase();
+const IS_SANDBOX = PAYPAL_MODE !== 'live';
+
+// Configure PayPal environment (sandbox uses api-m.sandbox.paypal.com)
 function environment() {
   const clientId = process.env.PAYPAL_CLIENT_ID;
   const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
-  const mode = process.env.PAYPAL_MODE || 'sandbox';
 
   if (!clientId || !clientSecret) {
     const err = new Error('PayPal is not configured (missing PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET).');
@@ -18,7 +20,7 @@ function environment() {
     throw err;
   }
 
-  if (mode === 'live') {
+  if (PAYPAL_MODE === 'live') {
     return new paypal.core.LiveEnvironment(clientId, clientSecret);
   }
   return new paypal.core.SandboxEnvironment(clientId, clientSecret);
@@ -26,6 +28,25 @@ function environment() {
 
 function client() {
   return new paypal.core.PayPalHttpClient(environment());
+}
+
+function parsePayPalError(err) {
+  const out = {
+    statusCode: err.statusCode,
+    message: err.message,
+    debug_id: null
+  };
+  if (err.headers && typeof err.headers === 'object') {
+    const h = err.headers;
+    out.debug_id = h['paypal-debug-id'] || h['PayPal-Debug-Id'] || null;
+  }
+  try {
+    const body = typeof err.message === 'string' ? JSON.parse(err.message) : err.message;
+    if (body && body.debug_id) out.debug_id = body.debug_id;
+    if (body && body.name) out.name = body.name;
+    if (body && body.details) out.details = body.details;
+  } catch (_) {}
+  return out;
 }
 
 /**
@@ -110,6 +131,13 @@ router.post('/create-order', auth, authorize('customer'), async (req, res) => {
       }];
     }
 
+    console.log('[PayPal create-order] Request', {
+      mode: PAYPAL_MODE,
+      sendToAuthors: SEND_TO_AUTHORS,
+      total: pricing.total,
+      unitCount: purchaseUnits.length
+    });
+
     const request = new paypal.orders.OrdersCreateRequest();
     request.prefer('return=representation');
     request.requestBody({
@@ -122,6 +150,12 @@ router.post('/create-order', auth, authorize('customer'), async (req, res) => {
 
     const order = await client().execute(request);
 
+    console.log('[PayPal create-order] OK', {
+      orderId: order.result?.id,
+      status: order.result?.status,
+      mode: PAYPAL_MODE
+    });
+
     res.json({
       success: true,
       id: order.result.id,
@@ -130,9 +164,21 @@ router.post('/create-order', auth, authorize('customer'), async (req, res) => {
       pricing
     });
   } catch (error) {
-    console.error('PayPal create-order error:', error);
-    const status = error.status || 500;
-    res.status(status).json({ message: error.message });
+    const parsed = parsePayPalError(error);
+    console.error('[PayPal create-order] FAILED', {
+      statusCode: parsed.statusCode,
+      message: parsed.message,
+      name: parsed.name,
+      debug_id: parsed.debug_id,
+      mode: PAYPAL_MODE
+    });
+    if (parsed.debug_id) {
+      console.error('[PayPal create-order] debug_id for support:', parsed.debug_id);
+    }
+    const status = error.status || error.statusCode || 500;
+    const payload = { message: error.message };
+    if (parsed.debug_id) payload.debug_id = parsed.debug_id;
+    res.status(status).json(payload);
   }
 });
 
@@ -150,26 +196,50 @@ router.post('/capture-order', auth, authorize('customer'), async (req, res) => {
 
     const capture = await client().execute(request);
 
+    console.log('[PayPal capture-order] OK', {
+      orderId,
+      status: capture.result?.status,
+      captureId: capture.result?.id,
+      mode: PAYPAL_MODE
+    });
+
     if (capture.result.status === 'COMPLETED') {
       res.json({
         success: true,
         orderId,
-        paymentId: capture.result.id, // PayPal capture id
+        paymentId: capture.result.id,
         payer: capture.result.payer
       });
     } else {
       res.status(400).json({ message: 'Payment not completed' });
     }
   } catch (error) {
-    console.error('PayPal capture error:', error);
-    const status = error.status || 500;
-    res.status(status).json({ message: error.message });
+    const parsed = parsePayPalError(error);
+    console.error('[PayPal capture-order] FAILED', {
+      orderId,
+      statusCode: parsed.statusCode,
+      message: parsed.message,
+      name: parsed.name,
+      debug_id: parsed.debug_id,
+      mode: PAYPAL_MODE
+    });
+    if (parsed.debug_id) {
+      console.error('[PayPal capture-order] debug_id for support:', parsed.debug_id);
+    }
+    const status = error.status || error.statusCode || 500;
+    const payload = { message: error.message };
+    if (parsed.debug_id) payload.debug_id = parsed.debug_id;
+    res.status(status).json(payload);
   }
 });
 
-// Get PayPal Client ID (public endpoint for frontend)
+// Get PayPal Client ID and mode (frontend must use same mode - sandbox client-id for sandbox)
 router.get('/client-id', (req, res) => {
-  res.json({ clientId: process.env.PAYPAL_CLIENT_ID || '' });
+  res.json({
+    clientId: process.env.PAYPAL_CLIENT_ID || '',
+    mode: PAYPAL_MODE,
+    isSandbox: IS_SANDBOX
+  });
 });
 
 module.exports = router;

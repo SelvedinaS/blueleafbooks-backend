@@ -93,8 +93,10 @@ router.post('/', auth, authorize('customer'), async (req, res) => {
       ...it,
       book: it.book ? ensureFullUrls(it.book) : it.book
     }));
+    console.log('[Orders] Created order', orderObj._id, 'total:', totalAmount);
     res.status(201).json(orderObj);
   } catch (error) {
+    console.error('[Orders] Create failed:', error.message, error.stack);
     const status = error.status || 500;
     res.status(status).json({ message: error.message });
   }

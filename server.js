@@ -50,7 +50,11 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   const { isSpacesConfigured } = require('./config/spaces');
+  const paypalMode = process.env.PAYPAL_MODE || 'sandbox';
   console.log(`Server running on port ${PORT}`);
+  if (process.env.PAYPAL_CLIENT_ID) {
+    console.log(`PayPal mode: ${paypalMode} (use sandbox client-id for sandbox, live for production)`);
+  }
   if (!isSpacesConfigured()) {
     console.warn('⚠️  DigitalOcean Spaces NOT configured. Uploads use local disk and will be LOST on restart.');
     console.warn('   Set SPACES_BUCKET, SPACES_KEY, SPACES_SECRET in Render env vars for persistent images.');
