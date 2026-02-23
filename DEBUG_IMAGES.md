@@ -10,7 +10,7 @@
 ### 2. **Backend vraća pogrešan URL**
 - **Provjeri:** Otvori u browseru: `https://blueleafbooks-backend-geum.onrender.com/api/books`
 - Pogledaj JSON – svaka knjiga treba imati `coverImage` s punim URL-om
-- Ako je Spaces: trebao bi biti `https://...onrender.com/api/proxy-image?url=...`
+- Ako je Spaces: trebao bi biti `https://...onrender.com/api/media?url=...`
 
 ### 3. **Proxy ne može dohvatiti sliku**
 - **Provjeri:** Kopiraj `coverImage` URL iz API odgovora, otvori ga u novom tabu

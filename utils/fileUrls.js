@@ -11,7 +11,7 @@ function toFullUrl(val) {
   const base = BACKEND_BASE.replace(/\/$/, '').replace(/geun\./g, 'geum.');
   // Spaces URLs: proxy through backend to avoid CORS/referrer issues
   if (/^https?:\/\//i.test(fixed) && fixed.includes('digitaloceanspaces.com')) {
-    return `${base}/api/proxy-image?url=${encodeURIComponent(fixed)}`;
+    return `${base}/api/media?url=${encodeURIComponent(fixed)}`;
   }
   if (/^https?:\/\//i.test(fixed)) return fixed;
   // Local uploads

@@ -1,6 +1,6 @@
 /**
  * Proxy images from Spaces to avoid CORS/referrer issues.
- * GET /api/proxy-image?url=https://bucket.region.digitaloceanspaces.com/...
+ * GET /api/media?url=https://bucket.region.digitaloceanspaces.com/...
  */
 const express = require('express');
 

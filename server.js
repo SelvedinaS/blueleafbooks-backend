@@ -24,7 +24,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
 app.use('/api/files', require('./routes/files'));
-app.use('/api/proxy-image', require('./routes/proxyImage'));
+app.use('/api/media', require('./routes/proxyImage'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/books', require('./routes/books'));
 app.use('/api/cart', require('./routes/cart'));
