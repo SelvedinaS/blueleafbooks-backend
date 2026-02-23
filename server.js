@@ -14,7 +14,7 @@ connectDB().then(async () => {
 
 const app = express();
 
-// Middleware
+// Middleware - CORS: allow all (frontend on Netlify, backend on Render)
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
