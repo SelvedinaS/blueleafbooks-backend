@@ -6,18 +6,20 @@ const BACKEND_BASE = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL 
 
 function toFullUrl(val) {
   if (!val || typeof val !== 'string') return val;
-  const base = BACKEND_BASE.replace(/\/$/, '');
+  // Fix common typos in stored URLs (fral→fra1, geun→geum)
+  let fixed = val.replace(/\.fral\./g, '.fra1.').replace(/geun\./g, 'geum.');
+  const base = BACKEND_BASE.replace(/\/$/, '').replace(/geun\./g, 'geum.');
   // Spaces URLs: proxy through backend to avoid CORS/referrer issues
-  if (/^https?:\/\//i.test(val) && val.includes('digitaloceanspaces.com')) {
-    return `${base}/api/proxy-image?url=${encodeURIComponent(val)}`;
+  if (/^https?:\/\//i.test(fixed) && fixed.includes('digitaloceanspaces.com')) {
+    return `${base}/api/proxy-image?url=${encodeURIComponent(fixed)}`;
   }
-  if (/^https?:\/\//i.test(val)) return val;
+  if (/^https?:\/\//i.test(fixed)) return fixed;
   // Local uploads
-  const coversMatch = val.match(/uploads\/covers\/(.+)$/);
+  const coversMatch = fixed.match(/uploads\/covers\/(.+)$/);
   if (coversMatch) return `${base}/api/files/cover/${coversMatch[1]}`;
-  const booksMatch = val.match(/uploads\/books\/(.+)$/);
+  const booksMatch = fixed.match(/uploads\/books\/(.+)$/);
   if (booksMatch) return `${base}/api/files/book/${booksMatch[1]}`;
-  return `${base}/${val.replace(/^\/+/, '')}`;
+  return `${base}/${fixed.replace(/^\/+/, '')}`;
 }
 
 function ensureFullUrls(book) {

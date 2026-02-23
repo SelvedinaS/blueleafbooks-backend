@@ -136,6 +136,38 @@ router.delete('/books/:id', auth, authorize('admin'), async (req, res) => {
   }
 });
 
+// Fix typos in stored URLs (fral→fra1, geun→geum) - one-time migration
+router.post('/fix-book-urls', auth, authorize('admin'), async (req, res) => {
+  try {
+    const books = await Book.find({});
+    let updated = 0;
+    for (const book of books) {
+      let changed = false;
+      if (book.coverImage && typeof book.coverImage === 'string') {
+        const fixed = book.coverImage.replace(/\.fral\./g, '.fra1.').replace(/geun\./g, 'geum.');
+        if (fixed !== book.coverImage) {
+          book.coverImage = fixed;
+          changed = true;
+        }
+      }
+      if (book.pdfFile && typeof book.pdfFile === 'string') {
+        const fixed = book.pdfFile.replace(/\.fral\./g, '.fra1.').replace(/geun\./g, 'geum.');
+        if (fixed !== book.pdfFile) {
+          book.pdfFile = fixed;
+          changed = true;
+        }
+      }
+      if (changed) {
+        await book.save();
+        updated++;
+      }
+    }
+    res.json({ message: `Fixed URLs in ${updated} books` });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Download monthly earnings PDF for a specific author (admin access)
 router.get('/reports/authors/:authorId/:year/:month', auth, authorize('admin'), async (req, res) => {
   try {

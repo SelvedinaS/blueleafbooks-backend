@@ -18,7 +18,12 @@ function isAllowedUrl(url) {
 
 router.get('/', async (req, res) => {
   try {
-    const url = req.query.url;
+    let url = req.query.url;
+    if (!url) {
+      return res.status(400).json({ message: 'Missing url parameter' });
+    }
+    // Fix common typos in stored URLs (fral→fra1)
+    url = url.replace(/\.fral\./g, '.fra1.');
     if (!isAllowedUrl(url)) {
       return res.status(400).json({ message: 'Invalid or disallowed URL' });
     }

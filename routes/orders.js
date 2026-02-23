@@ -3,6 +3,7 @@ const Order = require('../models/Order');
 const Book = require('../models/Book');
 const { auth, authorize } = require('../middleware/auth');
 const { calculateCartPricing } = require('../utils/pricing');
+const { ensureFullUrls } = require('../utils/fileUrls');
 
 const router = express.Router();
 
@@ -87,7 +88,12 @@ router.post('/', auth, authorize('customer'), async (req, res) => {
     await order.populate('items.book', 'title coverImage');
     await order.populate('customer', 'name email');
 
-    res.status(201).json(order);
+    const orderObj = order.toObject();
+    orderObj.items = (orderObj.items || []).map(it => ({
+      ...it,
+      book: it.book ? ensureFullUrls(it.book) : it.book
+    }));
+    res.status(201).json(orderObj);
   } catch (error) {
     const status = error.status || 500;
     res.status(status).json({ message: error.message });
@@ -104,7 +110,9 @@ router.get('/my-orders', auth, authorize('customer'), async (req, res) => {
     // Keep items for deleted books so previous buyers retain access.
     // Only drop entries where the book document truly no longer exists.
     const cleanedOrders = orders.map(order => {
-      const items = order.items.filter(item => item.book);
+      const items = order.items
+        .filter(item => item.book)
+        .map(item => ({ ...item, book: ensureFullUrls(item.book) }));
       return {
         ...order.toObject(),
         items
@@ -147,7 +155,12 @@ router.get('/:id', auth, async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    res.json(order);
+    const orderObj = order.toObject();
+    orderObj.items = (orderObj.items || []).map(it => ({
+      ...it,
+      book: it.book ? ensureFullUrls(it.book) : it.book
+    }));
+    res.json(orderObj);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

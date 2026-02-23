@@ -37,10 +37,12 @@ app.use('/api/admin', require('./routes/admin'));
 // Health check
 app.get('/api/health', (req, res) => {
   const { isSpacesConfigured } = require('./config/spaces');
+  const backendBase = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || 'https://blueleafbooks-backend-geum.onrender.com';
   res.json({
     status: 'OK',
     message: 'BlueLeafBooks API is running',
-    storage: isSpacesConfigured() ? 'spaces' : 'local'
+    storage: isSpacesConfigured() ? 'spaces' : 'local',
+    backendBase: backendBase.replace(/geun\./g, 'geum.')
   });
 });
 
