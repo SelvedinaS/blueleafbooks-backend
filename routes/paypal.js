@@ -112,7 +112,13 @@ router.post('/create-order', auth, authorize('customer'), async (req, res) => {
 
     const request = new paypal.orders.OrdersCreateRequest();
     request.prefer('return=representation');
-    request.requestBody({ intent: 'CAPTURE', purchase_units: purchaseUnits });
+    request.requestBody({
+      intent: 'CAPTURE',
+      purchase_units: purchaseUnits,
+      application_context: {
+        shipping_preference: 'NO_SHIPPING'
+      }
+    });
 
     const order = await client().execute(request);
 
