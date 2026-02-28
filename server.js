@@ -5,7 +5,6 @@ const cors = require('cors');
 const path = require('path');
 const connectDB = require('./config/database');
 
-
 // Connect to database
 connectDB().then(async () => {
   // Ensure admin user exists after database connection
@@ -14,8 +13,33 @@ connectDB().then(async () => {
 
 const app = express();
 
-// Middleware - CORS: allow all (frontend on Netlify, backend on Render)
-app.use(cors());
+/* =========================
+   CORS (SAFE for production)
+========================= */
+const FRONTEND_BASE_URL =
+  process.env.FRONTEND_BASE_URL ||
+  'https://blueleafbooks.netlify.app';
+
+const allowedOrigins = [
+  FRONTEND_BASE_URL,
+  'http://localhost:5173',
+  'http://localhost:3000'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // allow requests with no origin (Postman, server-to-server, etc.)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: true
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -37,7 +61,11 @@ app.use('/api/admin', require('./routes/admin'));
 // Health check
 app.get('/api/health', (req, res) => {
   const { isSpacesConfigured } = require('./config/spaces');
-  const backendBase = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || 'https://blueleafbooks-backend-geum.onrender.com';
+  const backendBase =
+    process.env.BACKEND_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    'https://blueleafbooks-backend-geum.onrender.com';
+
   res.json({
     status: 'OK',
     message: 'BlueLeafBooks API is running',
