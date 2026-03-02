@@ -30,9 +30,11 @@ function client() {
 
 function parsePayPalError(err) {
   const out = {
-    statusCode: err.statusCode,
+    statusCode: err.statusCode || err.status || 500,
     message: err.message,
-    debug_id: null
+    debug_id: null,
+    name: null,
+    details: null
   };
 
   if (err.headers) {
@@ -43,9 +45,10 @@ function parsePayPalError(err) {
   }
 
   try {
-    const body = typeof err.message === 'string'
-      ? JSON.parse(err.message)
-      : err.message;
+    const body =
+      typeof err.message === 'string'
+        ? JSON.parse(err.message)
+        : err.message;
 
     if (body?.debug_id) out.debug_id = body.debug_id;
     if (body?.name) out.name = body.name;
@@ -54,8 +57,6 @@ function parsePayPalError(err) {
 
   return out;
 }
-
-const SEND_TO_AUTHORS = process.env.PAYPAL_SEND_TO_AUTHORS !== 'false';
 
 /* =========================
    CREATE ORDER
@@ -111,19 +112,23 @@ router.post('/create-order', auth, authorize('customer'), async (req, res) => {
 
   } catch (error) {
     const parsed = parsePayPalError(error);
+
     console.error('[PayPal create-order] FAILED', parsed);
 
-    const status = error.status || error.statusCode || 500;
-    return res.status(status).json({ message: error.message });
+    return res.status(parsed.statusCode).json({
+      message: parsed.message,
+      name: parsed.name,
+      details: parsed.details,
+      debug_id: parsed.debug_id
+    });
   }
 });
 
 /* =========================
-   CAPTURE ORDER (FIXED)
+   CAPTURE ORDER
 ========================= */
 router.post('/capture-order', auth, authorize('customer'), async (req, res) => {
-
-  const { orderId } = req.body; // ✅ FIX: van try
+  const { orderId } = req.body;
 
   try {
     if (!orderId) {
@@ -154,13 +159,14 @@ router.post('/capture-order', auth, authorize('customer'), async (req, res) => {
   } catch (error) {
     const parsed = parsePayPalError(error);
 
-    console.error('[PayPal capture-order] FAILED', {
-      orderId: orderId || null,
-      ...parsed
-    });
+    console.error('[PayPal capture-order] FAILED', parsed);
 
-    const status = error.status || error.statusCode || 500;
-    return res.status(status).json({ message: error.message });
+    return res.status(parsed.statusCode).json({
+      message: parsed.message,
+      name: parsed.name,
+      details: parsed.details,
+      debug_id: parsed.debug_id
+    });
   }
 });
 
