@@ -3,15 +3,18 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/database');
 
 // Connect to database
 connectDB().then(async () => {
-  // Ensure admin user exists after database connection
   await ensureAdminUser();
 });
 
 const app = express();
+
+// IMPORTANT for Render (rate limit works correctly)
+app.set('trust proxy', 1);
 
 /* =========================
    CORS (SAFE for production)
@@ -28,7 +31,6 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    // allow requests with no origin (Postman, server-to-server, etc.)
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.includes(origin)) {
@@ -43,22 +45,69 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files (legacy only - new uploads go to DigitalOcean Spaces)
+/* =========================
+   RATE LIMITING
+========================= */
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests. Please try again later.' }
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 25,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many login attempts. Please try again later.' }
+});
+
+const paypalLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many payment requests. Please wait and try again.' }
+});
+
+const ordersLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 80,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many order requests. Please try again later.' }
+});
+
+// Apply general limiter to all API routes
+app.use('/api', apiLimiter);
+
+// Serve uploaded files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Routes
+/* =========================
+   ROUTES
+========================= */
+
 app.use('/api/files', require('./routes/files'));
 app.use('/api/media', require('./routes/proxyImage'));
-app.use('/api/auth', require('./routes/auth'));
+
+app.use('/api/auth', authLimiter, require('./routes/auth'));
+app.use('/api/orders', ordersLimiter, require('./routes/orders'));
+app.use('/api/paypal', paypalLimiter, require('./routes/paypal'));
+
 app.use('/api/books', require('./routes/books'));
 app.use('/api/cart', require('./routes/cart'));
 app.use('/api/checkout', require('./routes/checkout'));
-app.use('/api/orders', require('./routes/orders'));
-app.use('/api/paypal', require('./routes/paypal'));
 app.use('/api/authors', require('./routes/authors'));
 app.use('/api/admin', require('./routes/admin'));
 
-// Health check
+/* =========================
+   HEALTH CHECK
+========================= */
+
 app.get('/api/health', (req, res) => {
   const { isSpacesConfigured } = require('./config/spaces');
   const backendBase =
@@ -79,12 +128,14 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   const { isSpacesConfigured } = require('./config/spaces');
   const paypalMode = process.env.PAYPAL_MODE || 'sandbox';
+
   console.log(`Server running on port ${PORT}`);
+
   if (process.env.PAYPAL_CLIENT_ID) {
-    console.log(`PayPal mode: ${paypalMode} (use sandbox client-id for sandbox, live for production)`);
+    console.log(`PayPal mode: ${paypalMode}`);
   }
+
   if (!isSpacesConfigured()) {
-    console.warn('⚠️  DigitalOcean Spaces NOT configured. Uploads use local disk and will be LOST on restart.');
-    console.warn('   Set SPACES_BUCKET, SPACES_KEY, SPACES_SECRET in Render env vars for persistent images.');
+    console.warn('⚠️ DigitalOcean Spaces NOT configured.');
   }
 });
