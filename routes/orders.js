@@ -9,7 +9,7 @@ const { ensureFullUrls } = require('../utils/fileUrls');
 
 const router = express.Router();
 
-const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 5);
+const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 10);
 
 /* =========================
    PAYPAL HELPERS (VERIFY)
@@ -223,7 +223,7 @@ router.post('/', auth, authorize('customer'), async (req, res) => {
 router.get('/my-orders', auth, authorize('customer'), async (req, res) => {
   try {
     const orders = await Order.find({ customer: req.user._id })
-      .populate('items.book', 'title coverImage author isDeleted')
+      .populate('items.book', 'title coverImage author pdfFile isDeleted')
       .sort({ createdAt: -1 });
 
     const cleanedOrders = orders.map(order => {
@@ -265,7 +265,7 @@ router.get('/:id', auth, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
       .populate('customer', 'name email')
-      .populate('items.book', 'title coverImage author');
+      .populate('items.book', 'title coverImage author pdfFile');
 
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });

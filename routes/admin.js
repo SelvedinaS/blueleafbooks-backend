@@ -11,7 +11,7 @@ const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
-const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 5);
+const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 10);
 
 
 function parsePeriod(periodStr) {
@@ -299,6 +299,7 @@ router.get('/reports/monthly/:year/:month', auth, authorize('admin'), async (req
       createdAt: { $gte: periodStart, $lt: periodEnd }
     }).select('authorEarningsBreakdown totalAmount platformEarnings createdAt');
 
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
     const authors = await User.find({ role: 'author' })
       .select('name email createdAt')
       .sort({ name: 1 });
@@ -456,7 +457,7 @@ router.get('/cycle-fees', auth, authorize('admin'), async (req, res) => {
 
       const cycleKey = makeCycleKey(prevStart, prevEnd);
 
-      const effectiveStart = prevStart;
+      const effectiveStart = billing.trialEndsAt && billing.trialEndsAt > prevStart ? billing.trialEndsAt : prevStart;
 
       // Fee calculation (only if any billable time exists)
       let feeDue = 0;
@@ -490,9 +491,11 @@ router.get('/cycle-fees', auth, authorize('admin'), async (req, res) => {
 
       const isPaid = statusDoc ? !!statusDoc.isPaid : false;
 
-      const overdue = !isPaid && (now > dueDate) && feeDue > 0;
+      const overdue = !billing.isInTrial && !isPaid && (now > dueDate);
 
-      const trialDaysRemaining = 0;
+      const trialDaysRemaining = billing.isInTrial
+        ? Math.ceil((billing.trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+        : 0;
 
       rows.push({
         author: {
@@ -505,8 +508,8 @@ router.get('/cycle-fees', auth, authorize('admin'), async (req, res) => {
           blockedAt: author.blockedAt || null
         },
         billingDay: billing.billingDay,
-        isInTrial: false,
-        trialEndsAt: null,
+        isInTrial: billing.isInTrial,
+        trialEndsAt: billing.trialEndsAt,
         trialDaysRemaining,
         cycle: {
           start: prevStart,
@@ -591,27 +594,38 @@ router.post('/cycle-fees/:authorId/mark-unpaid', auth, authorize('admin'), async
   }
 });
 
-
 // Get all authors (admin)
 router.get('/authors', auth, authorize('admin'), async (req, res) => {
   try {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const now = new Date();
+
     const authors = await User.find({ role: 'author' })
       .select('name email payoutPaypalEmail createdAt isBlocked blockedReason blockedAt')
       .sort({ createdAt: -1 });
 
-    const result = authors.map(a => ({
-      _id: a._id,
-      name: a.name,
-      email: a.email,
-      payoutPaypalEmail: a.payoutPaypalEmail || '',
-      createdAt: a.createdAt,
-      isBlocked: !!a.isBlocked,
-      blockedReason: a.blockedReason || '',
-      blockedAt: a.blockedAt || null,
-      isInFirst30Days: false,
-      trialEndsAt: null,
-      daysUntilFee: 0
-    }));
+    const result = authors.map(a => {
+      const createdAt = a.createdAt ? new Date(a.createdAt) : null;
+      const trialEndsAt = createdAt ? new Date(createdAt.getTime() + THIRTY_DAYS_MS) : null;
+      const isInFirst30Days = trialEndsAt ? now < trialEndsAt : false;
+      const daysUntilFee = isInFirst30Days && trialEndsAt
+        ? Math.ceil((trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+        : 0;
+
+      return {
+        _id: a._id,
+        name: a.name,
+        email: a.email,
+        payoutPaypalEmail: a.payoutPaypalEmail || '',
+        createdAt: a.createdAt,
+        isBlocked: !!a.isBlocked,
+        blockedReason: a.blockedReason || '',
+        blockedAt: a.blockedAt || null,
+        isInFirst30Days,
+        trialEndsAt,
+        daysUntilFee
+      };
+    });
 
     res.json(result);
   } catch (error) {
@@ -640,7 +654,9 @@ router.get('/fees', auth, authorize('admin'), async (req, res) => {
 
     const rows = [];
     for (const author of authors) {
-      const effectiveStart = range.start;
+      const createdAt = author.createdAt ? new Date(author.createdAt) : null;
+      const trialEndsAt = createdAt ? new Date(createdAt.getTime() + THIRTY_DAYS_MS) : null;
+      const effectiveStart = trialEndsAt && trialEndsAt > range.start ? trialEndsAt : range.start;
 
       let grossSales = 0;
       let feeDue = 0;
