@@ -146,7 +146,7 @@ router.post('/forgot-password', async (req, res) => {
     user.resetPasswordExpires = new Date(expires);
     await user.save();
 
-    const baseUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:5500/frontend/pages';
+    const baseUrl = (process.env.FRONTEND_BASE_URL || 'https://blueleafbooks.netlify.app').replace(/\/$/, '');
     const resetLink = `${baseUrl}/reset-password.html?token=${encodeURIComponent(resetToken)}`;
 
     try {

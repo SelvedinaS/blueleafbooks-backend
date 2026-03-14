@@ -27,9 +27,12 @@ function toFullUrl(val) {
 function ensureFullUrls(book) {
   if (!book) return book;
   const b = book.toObject ? book.toObject() : { ...book };
-  // Always ensure coverImage and pdfFile are full URLs (preserve if already full)
+  const base = BACKEND_BASE.replace(/\/$/, '').replace(/geun\./g, 'geum.');
   if (b.coverImage != null && b.coverImage !== '') b.coverImage = toFullUrl(b.coverImage);
-  if (b.pdfFile != null && b.pdfFile !== '') b.pdfFile = toFullUrl(b.pdfFile);
+  // PDF: never expose direct link; always use protected download route (requires auth + purchase check)
+  if (b.pdfFile != null && b.pdfFile !== '' && b._id) {
+    b.pdfFile = `${base}/api/books/${b._id}/download`;
+  }
   return b;
 }
 

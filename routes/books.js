@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const Book = require('../models/Book');
 const User = require('../models/User');
+const Order = require('../models/Order');
 const { auth, authorize } = require('../middleware/auth');
 const { uploadToSpaces, isSpacesConfigured } = require('../config/spaces');
 
@@ -173,6 +174,65 @@ router.get('/featured/curated', async (req, res) => {
     res.json(ensureFullUrlsMany(books));
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+});
+
+// Protected PDF download: only for buyers or author of the book (must be before /:id)
+router.get('/:bookId/download', auth, async (req, res) => {
+  try {
+    const bookId = req.params.bookId;
+    const book = await Book.findById(bookId).select('pdfFile author isDeleted').lean();
+    if (!book || book.isDeleted) {
+      return res.status(404).json({ message: 'Book not found' });
+    }
+
+    const userId = req.user._id.toString();
+    const isAuthor = book.author && book.author.toString() === userId;
+
+    if (!isAuthor) {
+      const hasPurchased = await Order.exists({
+        customer: req.user._id,
+        paymentStatus: 'completed',
+        'items.book': bookId
+      });
+      if (!hasPurchased) {
+        return res.status(403).json({ message: 'You have not purchased this book.' });
+      }
+    }
+
+    let pdfSource = book.pdfFile;
+    if (!pdfSource || typeof pdfSource !== 'string') {
+      return res.status(404).json({ message: 'PDF not available.' });
+    }
+    pdfSource = pdfSource.replace(/\.fral\./g, '.fra1.').replace(/geun\./g, 'geum.');
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="book.pdf"');
+    res.setHeader('Cache-Control', 'no-store');
+
+    if (/^https?:\/\//i.test(pdfSource)) {
+      const resp = await fetch(pdfSource, { headers: { 'User-Agent': 'BlueLeafBooks/1.0' } });
+      if (!resp.ok) {
+        return res.status(502).json({ message: 'Failed to fetch PDF.' });
+      }
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      return res.send(buffer);
+    }
+
+    const localMatch = pdfSource.match(/uploads\/books\/(.+)$/);
+    if (localMatch) {
+      const filename = localMatch[1].replace(/[^a-zA-Z0-9.\-_]/g, '');
+      const filePath = path.resolve(BOOKS_DIR, filename);
+      if (!filePath.startsWith(path.resolve(BOOKS_DIR)) || !fs.existsSync(filePath)) {
+        return res.status(404).json({ message: 'File not found.' });
+      }
+      return fs.createReadStream(filePath).pipe(res);
+    }
+
+    return res.status(404).json({ message: 'PDF not available.' });
+  } catch (err) {
+    console.error('[books download]', err);
+    return res.status(500).json({ message: err.message || 'Download failed.' });
   }
 });
 
