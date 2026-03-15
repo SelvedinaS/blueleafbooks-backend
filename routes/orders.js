@@ -9,7 +9,7 @@ const { ensureFullUrls } = require('../utils/fileUrls');
 
 const router = express.Router();
 
-const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 10);
+const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 5);
 
 /* =========================
    PAYPAL HELPERS (VERIFY)

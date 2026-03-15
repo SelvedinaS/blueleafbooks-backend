@@ -8,7 +8,7 @@ const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
-const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 10);
+const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 5);
 
 function calcFeeFromNet(net, feePct) {
   const rate = feePct / 100;
@@ -49,21 +49,11 @@ function currentMonthPeriod(now = new Date()) {
 }
 
 function trialInfo(createdAt, now = new Date()) {
-  const created = new Date(createdAt);
-  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-  const trialEndsAt = new Date(created.getTime() + THIRTY_DAYS_MS);
-  const isInTrial = now < trialEndsAt;
-
-  const trialDaysRemaining = isInTrial
-    ? Math.ceil((trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
-    : 0;
-
-  return { trialEndsAt, isInTrial, trialDaysRemaining };
+  return { trialEndsAt: null, isInTrial: false, trialDaysRemaining: 0 };
 }
 
 function effectivePeriodStart(monthStart, trialEndsAt) {
-  if (!trialEndsAt) return monthStart;
-  return trialEndsAt > monthStart ? trialEndsAt : monthStart;
+  return monthStart;
 }
 
 // Get author dashboard stats
@@ -80,29 +70,21 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
     const now = new Date();
     const adminPaymentEmail = (process.env.ADMIN_EMAIL || 'blueleafbooks@hotmail.com');
 
-    // Trial (first 30 days from registration)
-    const trial = user?.createdAt ? trialInfo(user.createdAt, now) : { trialEndsAt: null, isInTrial: false, trialDaysRemaining: 0 };
+    const trial = { trialEndsAt: null, isInTrial: false, trialDaysRemaining: 0 };
 
-    const isInFirst30Days = !!trial.isInTrial;
-    const daysUntilFee = trial.trialDaysRemaining || 0;
+    const isInFirst30Days = false;
+    const daysUntilFee = 0;
 
-    // Calendar-month billing (after trial):
-    // - Trial ends on trialEndsAt (e.g. 5 Mar)
-    // - First payable period is from trialEndsAt to end of that calendar month (e.g. 5 Mar -> 1 Apr)
-    // - Then full calendar months (1 -> 1)
+    // Calendar-month billing:
     const currentPeriod = currentMonthPeriod(now);
     const prevPeriod = previousMonthPeriod(now);
 
     const currentRange = monthRangeFromPeriod(currentPeriod);
     const prevRange = monthRangeFromPeriod(prevPeriod);
 
-    const effectiveCurrentStart = (!isInFirst30Days && currentRange && trial.trialEndsAt)
-      ? effectivePeriodStart(currentRange.start, trial.trialEndsAt)
-      : null;
+    const effectiveCurrentStart = currentRange ? currentRange.start : null;
 
-    const effectivePrevStart = (!prevRange || !trial.trialEndsAt)
-      ? null
-      : effectivePeriodStart(prevRange.start, trial.trialEndsAt);
+    const effectivePrevStart = prevRange ? prevRange.start : null;
 
     // Orders (all-time) for totals
     const ordersAll = await Order.find({
@@ -111,7 +93,7 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
     });
 
     // Orders for current month (accrued, not yet due)
-    const ordersCurrent = (!isInFirst30Days && currentRange && effectiveCurrentStart && effectiveCurrentStart < currentRange.end)
+    const ordersCurrent = (currentRange && effectiveCurrentStart && effectiveCurrentStart < currentRange.end)
       ? await Order.find({
           paymentStatus: 'completed',
           createdAt: { $gte: effectiveCurrentStart, $lt: currentRange.end },
@@ -133,7 +115,7 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
     let unpaidEarnings = 0;
     let platformFeeDueTotal = 0;
     let grossSalesTotal = 0;
-    // ===== Calendar-month platform fee (after trial) =====
+    // ===== Calendar-month platform fee =====
     let currentMonthFeeAccrued = 0;
     let currentMonthGrossSales = 0;
 
@@ -175,9 +157,8 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
 
     const lastMonthOverdue = !!(lastMonthDueDate && !lastMonthStatus.isPaid && now > lastMonthDueDate && lastMonthFeeDue > 0);
 
-    // During trial: nothing due yet.
-    const platformFeeToShow = isInFirst30Days ? 0 : lastMonthFeeDue;
-    const grossSalesToShow = isInFirst30Days ? 0 : lastMonthGrossSales;
+    const platformFeeToShow = lastMonthFeeDue;
+    const grossSalesToShow = lastMonthGrossSales;
 
     res.json({
       books: books.length,
