@@ -122,7 +122,7 @@ router.get('/me', auth, async (req, res) => {
   });
 });
 
-// Forgot password - request reset (sends a secure reset link via email)
+// Forgot password - manual support flow (no automatic email sending)
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -133,40 +133,16 @@ router.post('/forgot-password', async (req, res) => {
     const normalizedEmail = email.trim().toLowerCase();
     const user = await User.findOne({ email: normalizedEmail });
 
-    // Always respond with success message to avoid leaking which emails exist
-    if (!user) {
-      return res.json({ message: 'If that email is registered, you will receive a password reset email shortly.' });
+    // Clear any stale reset tokens so old links cannot be reused later.
+    if (user) {
+      user.resetPasswordToken = undefined;
+      user.resetPasswordExpires = undefined;
+      await user.save();
     }
 
-    // Generate a secure random reset token
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const expires = Date.now() + 1000 * 60 * 60; // 1 hour
-
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = new Date(expires);
-    await user.save();
-
-    const baseUrl = (process.env.FRONTEND_BASE_URL || 'https://blueleafbooks.netlify.app').replace(/\/$/, '');
-    const resetLink = `${baseUrl}/reset-password.html?token=${encodeURIComponent(resetToken)}`;
-
-    try {
-      await sendEmail({
-        to: user.email,
-        subject: 'Reset your BlueLeafBooks password',
-        html: `
-          <h1>Password Reset Request</h1>
-          <p>You (or someone else) requested a password reset for your BlueLeafBooks account.</p>
-          <p>Click the link below to set a new password. This link is valid for 1 hour.</p>
-          <p><a href="${resetLink}" target="_blank">Reset your password</a></p>
-          <p>If you did not request this, you can safely ignore this email.</p>
-        `
-      });
-    } catch (err) {
-      console.error('Error sending reset email:', err);
-      // Don't expose email sending issues to the user
-    }
-
-    res.json({ message: 'If that email is registered, you will receive a password reset email shortly.' });
+    return res.json({
+      message: 'Password reset is handled manually. Please contact BlueLeafBooks support at blueleafbooks@hotmail.com and include your account email address.'
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
