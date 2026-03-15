@@ -148,38 +148,11 @@ router.post('/forgot-password', async (req, res) => {
   }
 });
 
-// Reset password - verify token and set new password
+// Reset password - manual support flow only
 router.post('/reset-password', async (req, res) => {
-  try {
-    const { token, password, newPassword } = req.body;
-    const finalPassword = newPassword || password;
-
-    if (!token || !finalPassword) {
-      return res.status(400).json({ message: 'Token and new password are required' });
-    }
-
-    if (finalPassword.length < 6) {
-      return res.status(400).json({ message: 'Password must be at least 6 characters long' });
-    }
-
-    const user = await User.findOne({
-      resetPasswordToken: token,
-      resetPasswordExpires: { $gt: new Date() }
-    });
-
-    if (!user) {
-      return res.status(400).json({ message: 'Invalid or expired reset token' });
-    }
-
-    user.password = finalPassword; // will be hashed by pre-save hook
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
-    await user.save();
-
-    res.json({ message: 'Password has been reset successfully. You can now log in with your new password.' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
+  return res.status(400).json({
+    message: 'Automatic reset links are not currently in use. Please contact BlueLeafBooks support at blueleafbooks@hotmail.com for manual password reset support.'
+  });
 });
 
 module.exports = router;

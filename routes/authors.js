@@ -48,13 +48,6 @@ function currentMonthPeriod(now = new Date()) {
   return isoMonth(now);
 }
 
-function trialInfo(createdAt, now = new Date()) {
-  return { trialEndsAt: null, isInTrial: false, trialDaysRemaining: 0 };
-}
-
-function effectivePeriodStart(monthStart, trialEndsAt) {
-  return monthStart;
-}
 
 // Get author dashboard stats
 router.get('/dashboard', auth, authorize('author'), async (req, res) => {
@@ -70,10 +63,6 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
     const now = new Date();
     const adminPaymentEmail = (process.env.ADMIN_EMAIL || 'blueleafbooks@hotmail.com');
 
-    const trial = { trialEndsAt: null, isInTrial: false, trialDaysRemaining: 0 };
-
-    const isInFirst30Days = false;
-    const daysUntilFee = 0;
 
     // Calendar-month billing:
     const currentPeriod = currentMonthPeriod(now);
@@ -192,9 +181,9 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
         dueDate: currentMonthDueDate
       },
 
-      isInFirst30Days,
-      daysUntilFee,
-      trialEndsAt: trial.trialEndsAt || null,
+      isInFirst30Days: false,
+      daysUntilFee: 0,
+      trialEndsAt: null,
       adminPaymentEmail,
       booksList: books
     });

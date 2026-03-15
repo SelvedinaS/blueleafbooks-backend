@@ -299,19 +299,7 @@ router.get('/reports/monthly/:year/:month', auth, authorize('admin'), async (req
     const authors = await User.find({ role: 'author' })
       .select('name email createdAt')
       .sort({ name: 1 });
-
-    const trialEndsMap = new Map();
-    for (const a of authors) {
-      const created = a.createdAt ? new Date(a.createdAt) : null;
-      const trialEndsAt = created ? new Date(created.getTime() + THIRTY_DAYS_MS) : null;
-      trialEndsMap.set(String(a._id), trialEndsAt);
-    }
-
-    const perAuthor = new Map();
-    let totalPlatformFee = 0;
-    let totalGross = 0;
-
-    for (const order of orders) {
+      for (const order of orders) {
       if (!Array.isArray(order.authorEarningsBreakdown)) continue;
       for (const row of order.authorEarningsBreakdown) {
         const aid = String(row.author);
@@ -453,7 +441,7 @@ router.get('/cycle-fees', auth, authorize('admin'), async (req, res) => {
 
       const cycleKey = makeCycleKey(prevStart, prevEnd);
 
-      const effectiveStart = billing.trialEndsAt && billing.trialEndsAt > prevStart ? billing.trialEndsAt : prevStart;
+      const effectiveStart = prevStart;
 
       // Fee calculation (only if any billable time exists)
       let feeDue = 0;
@@ -487,11 +475,8 @@ router.get('/cycle-fees', auth, authorize('admin'), async (req, res) => {
 
       const isPaid = statusDoc ? !!statusDoc.isPaid : false;
 
-      const overdue = !billing.isInTrial && !isPaid && (now > dueDate);
-
-      const trialDaysRemaining = billing.isInTrial
-        ? Math.ceil((billing.trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
-        : 0;
+      const overdue = !isPaid && (now > dueDate);
+      const trialDaysRemaining = 0;
 
       rows.push({
         author: {
