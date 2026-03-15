@@ -181,9 +181,6 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
         dueDate: currentMonthDueDate
       },
 
-      isInFirst30Days: false,
-      daysUntilFee: 0,
-      trialEndsAt: null,
       adminPaymentEmail,
       booksList: books
     });

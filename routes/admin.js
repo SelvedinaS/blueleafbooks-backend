@@ -53,7 +53,7 @@ function getBillingWindow(createdAt, now) {
   const periodStart = now.getDate() >= billingDay
     ? new Date(y, m, billingDay, 0, 0, 0, 0)
     : new Date(y, m - 1, billingDay, 0, 0, 0, 0);
-  return { periodStart, billingDay, isInTrial: false, trialEndsAt: null };
+  return { periodStart, billingDay };
 }
 
 function makeDateWithClampedDay(y, m, day, h, min, s, ms) {
@@ -299,13 +299,15 @@ router.get('/reports/monthly/:year/:month', auth, authorize('admin'), async (req
     const authors = await User.find({ role: 'author' })
       .select('name email createdAt')
       .sort({ name: 1 });
-      for (const order of orders) {
+
+    const perAuthor = new Map();
+    let totalPlatformFee = 0;
+    let totalGross = 0;
+
+    for (const order of orders) {
       if (!Array.isArray(order.authorEarningsBreakdown)) continue;
       for (const row of order.authorEarningsBreakdown) {
         const aid = String(row.author);
-        const trialEndsAt = trialEndsMap.get(aid);
-        if (trialEndsAt && order.createdAt && new Date(order.createdAt) < trialEndsAt) continue;
-
         const net = Number(row.amount || 0);
         if (net <= 0) continue;
 
@@ -420,7 +422,7 @@ router.post('/fees/:authorId/mark-unpaid', auth, authorize('admin'), async (req,
 
 // ===== Cycle-based platform fee tracking (join-date billing cycles) =====
 // Returns each author's last completed billing cycle fee, due date (10th of following month),
-// and trial status (first 30 days).
+// and current billing-cycle status.
 router.get('/cycle-fees', auth, authorize('admin'), async (req, res) => {
   try {
     const now = new Date();
@@ -476,7 +478,6 @@ router.get('/cycle-fees', auth, authorize('admin'), async (req, res) => {
       const isPaid = statusDoc ? !!statusDoc.isPaid : false;
 
       const overdue = !isPaid && (now > dueDate);
-      const trialDaysRemaining = 0;
 
       rows.push({
         author: {
@@ -489,9 +490,6 @@ router.get('/cycle-fees', auth, authorize('admin'), async (req, res) => {
           blockedAt: author.blockedAt || null
         },
         billingDay: billing.billingDay,
-        isInTrial: billing.isInTrial,
-        trialEndsAt: billing.trialEndsAt,
-        trialDaysRemaining,
         cycle: {
           start: prevStart,
           end: prevEnd,
@@ -590,10 +588,7 @@ router.get('/authors', auth, authorize('admin'), async (req, res) => {
       createdAt: a.createdAt,
       isBlocked: !!a.isBlocked,
       blockedReason: a.blockedReason || '',
-      blockedAt: a.blockedAt || null,
-      isInFirst30Days: false,
-      trialEndsAt: null,
-      daysUntilFee: 0
+      blockedAt: a.blockedAt || null
     }));
 
     res.json(result);
