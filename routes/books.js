@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const Book = require('../models/Book');
+const { BOOK_GENRES, normalizeGenre } = require('../config/bookGenres');
 const User = require('../models/User');
 const Order = require('../models/Order');
 const { auth, authorize } = require('../middleware/auth');
@@ -117,8 +118,7 @@ router.get('/', async (req, res) => {
 // Get genres
 router.get('/genres/list', async (req, res) => {
   try {
-    const genres = await Book.distinct('genre', { isDeleted: false });
-    res.json(genres);
+    res.json(BOOK_GENRES);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -372,6 +372,7 @@ router.post('/', auth, authorize('author'), upload.fields([
 ]), async (req, res) => {
   try {
     const { title, description, genre, price } = req.body;
+    const normalizedGenre = normalizeGenre(genre);
 
     // Publishing is restricted if the author is blocked (e.g., unpaid platform fee)
     if (req.user?.isBlocked) {
@@ -382,6 +383,10 @@ router.post('/', auth, authorize('author'), upload.fields([
     const user = await User.findById(req.user._id).select('payoutPaypalEmail');
     if (!user?.payoutPaypalEmail || !String(user.payoutPaypalEmail).trim()) {
       return res.status(403).json({ message: 'You must set your PayPal email before publishing books. Go to Dashboard → Payout Settings.' });
+    }
+
+    if (!normalizedGenre) {
+      return res.status(400).json({ message: 'Please choose a valid genre from the list.' });
     }
 
     if (!req.files?.pdfFile?.[0] || !req.files?.coverImage?.[0]) {
@@ -415,7 +420,7 @@ router.post('/', auth, authorize('author'), upload.fields([
     const book = new Book({
       title,
       description,
-      genre,
+      genre: normalizedGenre,
       price: parseFloat(price),
       author: req.user._id,
       pdfFile: pdfUrl,
@@ -460,10 +465,16 @@ router.put('/:id', auth, authorize('author'), upload.fields([
     }
 
     const { title, description, genre, price } = req.body;
+    const normalizedGenre = typeof genre !== 'undefined' ? normalizeGenre(genre) : '';
 
     if (title) book.title = title;
     if (description) book.description = description;
-    if (genre) book.genre = genre;
+    if (typeof genre !== 'undefined') {
+      if (!normalizedGenre) {
+        return res.status(400).json({ message: 'Please choose a valid genre from the list.' });
+      }
+      book.genre = normalizedGenre;
+    }
     if (price) book.price = parseFloat(price);
 
     // Upload new files if provided

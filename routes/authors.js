@@ -104,6 +104,52 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
     let unpaidEarnings = 0;
     let platformFeeDueTotal = 0;
     let grossSalesTotal = 0;
+
+    const salesByBook = new Map();
+    const ratingSource = Array.isArray(books) ? books : [];
+
+    for (const book of ratingSource) {
+      salesByBook.set(String(book._id), {
+        _id: book._id,
+        title: book.title,
+        coverImage: book.coverImage,
+        salesCount: Number(book.salesCount || 0),
+        rating: Number(book.rating || 0),
+        ratingCount: Number(book.ratingCount || 0),
+        earnings: 0
+      });
+    }
+
+    for (const order of ordersAll) {
+      if (!Array.isArray(order.items)) continue;
+      let authorNetFromOrder = 0;
+      if (Array.isArray(order.authorEarningsBreakdown)) {
+        const row = order.authorEarningsBreakdown.find(e => String(e.author) === String(authorId));
+        authorNetFromOrder = Number(row?.amount || 0);
+      }
+      if (authorNetFromOrder > 0) {
+        totalEarnings += authorNetFromOrder;
+        unpaidEarnings += authorNetFromOrder;
+      }
+
+      for (const item of order.items) {
+        const bid = item?.book ? String(item.book) : null;
+        if (!bid || !salesByBook.has(bid)) continue;
+        totalSales += 1;
+        const row = salesByBook.get(bid);
+        row.earnings += Number(item.price || 0);
+      }
+    }
+
+    const rankedBooks = Array.from(salesByBook.values());
+    const topBook = rankedBooks
+      .filter(book => book.salesCount > 0)
+      .sort((a, b) => (b.salesCount - a.salesCount) || (b.earnings - a.earnings) || a.title.localeCompare(b.title))[0] || null;
+
+    const topRatedBook = rankedBooks
+      .filter(book => book.ratingCount > 0)
+      .sort((a, b) => (b.rating - a.rating) || (b.ratingCount - a.ratingCount) || (b.salesCount - a.salesCount))[0] || null;
+
     // ===== Calendar-month platform fee =====
     let currentMonthFeeAccrued = 0;
     let currentMonthGrossSales = 0;
@@ -182,6 +228,8 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
       },
 
       adminPaymentEmail,
+      topBook,
+      topRatedBook,
       booksList: books
     });
   } catch (error) {

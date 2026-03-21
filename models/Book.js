@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { BOOK_GENRES } = require('../config/bookGenres');
 
 const bookSchema = new mongoose.Schema({
   title: {
@@ -18,7 +19,8 @@ const bookSchema = new mongoose.Schema({
   genre: {
     type: String,
     required: true,
-    trim: true
+    trim: true,
+    enum: BOOK_GENRES
   },
   price: {
     type: Number,
