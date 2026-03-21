@@ -2,48 +2,42 @@ const BOOK_GENRES = [
   'Art & Design',
   'Biography',
   'Business',
-  'Children's Books',
-  'Coding & Programming',
+  'Children',
   'Comics & Graphic Novels',
   'Cooking & Food',
   'Crafts & Hobbies',
-  'Creativity',
   'Education',
   'Entrepreneurship',
   'Fantasy',
   'Fiction',
   'Finance',
-  'Freelancing',
   'Health & Fitness',
   'History',
   'Horror',
+  'Humor',
   'Language Learning',
-  'Leadership',
   'Lifestyle',
   'Marketing',
   'Memoir',
-  'Mindset & Motivation',
   'Mystery',
-  'Parenting & Family',
+  'Non-Fiction',
+  'Parenting',
   'Personal Development',
   'Philosophy',
   'Poetry',
   'Politics',
   'Productivity',
   'Psychology',
+  'Relationships',
   'Religion & Spirituality',
   'Romance',
-  'Sales',
   'Science',
   'Science Fiction',
   'Self-Help',
-  'Social Media',
   'Technology',
   'Thriller',
   'Travel',
-  'Wellness',
-  'Women's Interests',
-  'Writing'
+  'Writing',
 ].sort((a, b) => a.localeCompare(b));
 
 const GENRE_ALIASES = {
@@ -76,8 +70,19 @@ const GENRE_ALIASES = {
   'memoir': 'Memoir',
   'poetry': 'Poetry',
   'writing': 'Writing',
-  'coding': 'Coding & Programming',
-  'programming': 'Coding & Programming'
+  'childrens books': 'Children',
+  'children's books': 'Children',
+  'children': 'Children',
+  'parenting': 'Parenting',
+  'parenting & family': 'Parenting',
+  'non fiction': 'Non-Fiction',
+  'non-fiction': 'Non-Fiction',
+  'humour': 'Humor',
+  'humor': 'Humor',
+  'art': 'Art & Design',
+  'art and design': 'Art & Design',
+  'crafts': 'Crafts & Hobbies',
+  'language': 'Language Learning',
 };
 
 function normalizeGenre(value) {
@@ -85,7 +90,7 @@ function normalizeGenre(value) {
   if (!raw) return '';
   const lowered = raw.toLowerCase();
   if (GENRE_ALIASES[lowered]) return GENRE_ALIASES[lowered];
-  const direct = BOOK_GENRES.find((genre) => genre.toLowerCase() == lowered);
+  const direct = BOOK_GENRES.find((genre) => genre.toLowerCase() === lowered);
   return direct || '';
 }
 
