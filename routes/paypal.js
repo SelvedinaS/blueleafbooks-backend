@@ -174,6 +174,9 @@ router.post('/capture-order', auth, authorize('customer'), async (req, res) => {
    CLIENT ID
 ========================= */
 router.get('/client-id', (req, res) => {
+  console.log('ENV PAYPAL_CLIENT_ID =', process.env.PAYPAL_CLIENT_ID);
+  console.log('ENV PAYPAL_MODE =', process.env.PAYPAL_MODE);
+
   res.json({
     clientId: process.env.PAYPAL_CLIENT_ID || '',
     mode: PAYPAL_MODE,
