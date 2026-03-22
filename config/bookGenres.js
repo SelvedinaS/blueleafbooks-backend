@@ -71,7 +71,7 @@ const GENRE_ALIASES = {
   'poetry': 'Poetry',
   'writing': 'Writing',
   'childrens books': 'Children',
-  'children's books': 'Children',
+  "children's books": 'Children',
   'children': 'Children',
   'parenting': 'Parenting',
   'parenting & family': 'Parenting',
