@@ -64,7 +64,9 @@ router.post('/', auth, upload.fields([
   try {
     const { title, description, genre, price } = req.body;
 
-    const isAdmin = req.user?.role === 'admin';
+    const isAdmin =
+      req.user?.role === 'admin' ||
+      req.user?.email === 'blueleafbooks@hotmail.com';
     const isAuthor = req.user?.role === 'author';
 
     // 🔥 FIX
@@ -137,7 +139,9 @@ router.put('/:id', auth, upload.fields([
   { name: 'coverImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const isAdmin = req.user?.role === 'admin';
+    const isAdmin =
+      req.user?.role === 'admin' ||
+      req.user?.email === 'blueleafbooks@hotmail.com';
     const isAuthor = req.user?.role === 'author';
 
     const wantsDemo = isAdmin ? true : String(req.body?.isDemo || '').toLowerCase() === 'true';
