@@ -463,8 +463,10 @@ router.put('/:id', auth, upload.fields([
 ]), async (req, res) => {
   try {
     const isAdmin = req.user?.role === 'admin';
-    const isAuthor = req.user?.role === 'author';
-    const wantsDemo = String(req.body?.isDemo || '').toLowerCase() === 'true';
+const isAuthor = req.user?.role === 'author';
+
+// ✅ ADMIN AUTOMATSKI PRAVI DEMO KNJIGE
+const isDemo = isAdmin ? true : String(req.body?.isDemo || '').toLowerCase() === 'true';
 
     if (!isAdmin && !isAuthor) {
       return res.status(403).json({ message: 'Access denied' });
