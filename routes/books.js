@@ -99,7 +99,7 @@ router.get('/', async (req, res) => {
     else sortOptions = { createdAt: order === 'asc' ? 1 : -1 };
 
     const booksRaw = await Book.find(query)
-      .select('title description genre price coverImage rating ratingCount salesCount author isDeleted isFeatured featuredOrder status createdAt updatedAt')
+      .select('title description genre price coverImage rating ratingCount salesCount author isDeleted isFeatured featuredOrder isDemo status createdAt updatedAt')
       .populate('author', 'name email isBlocked')
       .sort(sortOptions)
       .lean();
@@ -350,7 +350,7 @@ router.get('/:id', async (req, res) => {
       isDeleted: false,
       status: 'approved'
     })
-      .select('title description genre price coverImage rating ratingCount salesCount author isDeleted isFeatured featuredOrder status createdAt updatedAt')
+      .select('title description genre price coverImage rating ratingCount salesCount author isDeleted isFeatured featuredOrder isDemo status createdAt updatedAt')
       .populate('author', 'name email isBlocked')
       .lean();
 
@@ -370,23 +370,36 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create book (author only)
-router.post('/', auth, authorize('author'), upload.fields([
+router.post('/', auth, upload.fields([
   { name: 'pdfFile', maxCount: 1 },
   { name: 'coverImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
     const { title, description, genre, price } = req.body;
     const normalizedGenre = normalizeGenre(genre);
+    const isAdmin = req.user?.role === 'admin';
+    const isAuthor = req.user?.role === 'author';
+    const isDemo = String(req.body?.isDemo || '').toLowerCase() === 'true';
+
+    if (!isAdmin && !isAuthor) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    if (isAdmin && !isDemo) {
+      return res.status(403).json({ message: 'Admins can only publish demo books.' });
+    }
 
     // Publishing is restricted if the author is blocked (e.g., unpaid platform fee)
     if (req.user?.isBlocked) {
       return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to publish books.' });
     }
 
-    // PayPal required for publishing (earnings must go somewhere)
-    const user = await User.findById(req.user._id).select('payoutPaypalEmail');
-    if (!user?.payoutPaypalEmail || !String(user.payoutPaypalEmail).trim()) {
-      return res.status(403).json({ message: 'You must set your PayPal email before publishing books. Go to Dashboard → Payout Settings.' });
+    // PayPal required for regular author books (demo books created by admin do not need payout details)
+    if (!isAdmin) {
+      const user = await User.findById(req.user._id).select('payoutPaypalEmail');
+      if (!user?.payoutPaypalEmail || !String(user.payoutPaypalEmail).trim()) {
+        return res.status(403).json({ message: 'You must set your PayPal email before publishing books. Go to Dashboard → Payout Settings.' });
+      }
     }
 
     if (!normalizedGenre) {
@@ -429,6 +442,7 @@ router.post('/', auth, authorize('author'), upload.fields([
       author: req.user._id,
       pdfFile: pdfUrl,
       coverImage: coverUrl,
+      isDemo: isAdmin ? true : false,
       status: 'approved'
     });
 
@@ -443,19 +457,29 @@ router.post('/', auth, authorize('author'), upload.fields([
 });
 
 // Update book (author only, their own books)
-router.put('/:id', auth, authorize('author'), upload.fields([
+router.put('/:id', auth, upload.fields([
   { name: 'pdfFile', maxCount: 1 },
   { name: 'coverImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
+    const isAdmin = req.user?.role === 'admin';
+    const isAuthor = req.user?.role === 'author';
+    const wantsDemo = String(req.body?.isDemo || '').toLowerCase() === 'true';
+
+    if (!isAdmin && !isAuthor) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
     if (req.user?.isBlocked) {
       return res.status(403).json({ message: 'Your account is restricted. Please settle outstanding platform fees to edit books.' });
     }
 
-    // PayPal required for editing
-    const user = await User.findById(req.user._id).select('payoutPaypalEmail');
-    if (!user?.payoutPaypalEmail || !String(user.payoutPaypalEmail).trim()) {
-      return res.status(403).json({ message: 'You must set your PayPal email before editing books. Go to Dashboard → Payout Settings.' });
+    // PayPal required for regular author books (demo books edited by admin do not need payout details)
+    if (!isAdmin) {
+      const user = await User.findById(req.user._id).select('payoutPaypalEmail');
+      if (!user?.payoutPaypalEmail || !String(user.payoutPaypalEmail).trim()) {
+        return res.status(403).json({ message: 'You must set your PayPal email before editing books. Go to Dashboard → Payout Settings.' });
+      }
     }
 
     const book = await Book.findById(req.params.id);
@@ -464,7 +488,11 @@ router.put('/:id', auth, authorize('author'), upload.fields([
       return res.status(404).json({ message: 'Book not found' });
     }
 
-    if (book.author.toString() !== req.user._id.toString()) {
+    if (isAdmin) {
+      if (!book.isDemo) {
+        return res.status(403).json({ message: 'Admins can only edit demo books.' });
+      }
+    } else if (book.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized to edit this book' });
     }
 
@@ -480,6 +508,7 @@ router.put('/:id', auth, authorize('author'), upload.fields([
       book.genre = normalizedGenre;
     }
     if (price) book.price = parseFloat(price);
+    if (isAdmin) book.isDemo = wantsDemo || book.isDemo;
 
     // Upload new files if provided
     if (req.files?.coverImage?.[0]) {

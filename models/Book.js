@@ -83,6 +83,10 @@ const bookSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+  isDemo: {
+    type: Boolean,
+    default: false
+  },
 
   status: {
     type: String,
@@ -104,5 +108,6 @@ bookSchema.index({ title: 'text', description: 'text' });
 bookSchema.index({ genre: 1 });
 bookSchema.index({ status: 1 });
 bookSchema.index({ isDeleted: 1 });
+bookSchema.index({ isDemo: 1 });
 
 module.exports = mongoose.model('Book', bookSchema);
