@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const dns = require('dns').promises;
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
@@ -12,21 +13,42 @@ router.post('/register', async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
 
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+
     // Validate role
     if (role && !['customer', 'author'].includes(role)) {
       return res.status(400).json({ message: 'Invalid role' });
     }
 
     // Check if user exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists' });
+    }
+
+    // Basic MX check to see if email domain exists
+    const parts = normalizedEmail.split('@');
+    if (parts.length !== 2 || !parts[1]) {
+      return res.status(400).json({ message: 'Invalid email address' });
+    }
+    const domain = parts[1];
+    try {
+      const mxRecords = await dns.resolveMx(domain);
+      if (!mxRecords || mxRecords.length === 0) {
+        return res.status(400).json({ message: 'Email domain does not accept mail' });
+      }
+    } catch (err) {
+      return res.status(400).json({ message: 'Email domain does not exist or cannot be reached' });
     }
 
     // Create user
     const user = new User({
       name,
-      email,
+      email: normalizedEmail,
       password,
       role: role || 'customer'
     });

@@ -1,8 +1,11 @@
 const express = require('express');
 const paypal = require('@paypal/checkout-server-sdk');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 
 const Order = require('../models/Order');
 const Book = require('../models/Book');
+const User = require('../models/User');
 const { auth, authorize } = require('../middleware/auth');
 const { calculateCartPricing } = require('../utils/pricing');
 const { ensureFullUrls } = require('../utils/fileUrls');
@@ -62,9 +65,9 @@ function parsePayPalError(err) {
 }
 
 /* =========================
-   CREATE ORDER (SECURE)
-========================= */
-router.post('/', auth, authorize('customer'), async (req, res) => {
+   CREATE ORDER (SECURE, SUPPORTS GUESTS)
+  ========================= */
+router.post('/', async (req, res) => {
   try {
     const { items, paymentId, discountCode } = req.body;
 
@@ -147,6 +150,57 @@ router.post('/', auth, authorize('customer'), async (req, res) => {
     }
 
     /* =========================
+       DETERMINE / CREATE CUSTOMER
+    ========================= */
+    let customer = null;
+
+    // If a valid JWT is present, prefer that user
+    const authHeader = req.header('Authorization');
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.replace('Bearer ', '').trim();
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          const existing = await User.findById(decoded.userId).select('_id role');
+          if (existing) {
+            customer = existing;
+          }
+        } catch (e) {
+          // ignore invalid token for guest checkout
+        }
+      }
+    }
+
+    // Fallback to PayPal payer email for true guest checkout
+    if (!customer) {
+      const payerEmail = pp?.payer?.email_address;
+      const payerName = [
+        pp?.payer?.name?.given_name || '',
+        pp?.payer?.name?.surname || ''
+      ].join(' ').trim();
+
+      if (!payerEmail) {
+        return res.status(400).json({ message: 'Unable to determine customer email from PayPal.' });
+      }
+
+      const normalizedEmail = String(payerEmail).trim().toLowerCase();
+      let user = await User.findOne({ email: normalizedEmail });
+
+      if (!user) {
+        const randomPassword = crypto.randomBytes(12).toString('hex');
+        user = new User({
+          name: payerName || normalizedEmail,
+          email: normalizedEmail,
+          password: randomPassword,
+          role: 'customer'
+        });
+        await user.save();
+      }
+
+      customer = user;
+    }
+
+    /* =========================
        BUILD ORDER
     ========================= */
     const orderItems = books.map(book => ({
@@ -177,7 +231,7 @@ router.post('/', auth, authorize('customer'), async (req, res) => {
     }));
 
     const order = new Order({
-      customer: req.user._id,
+      customer: customer._id,
       items: orderItems,
       totalAmount,
       platformEarnings,

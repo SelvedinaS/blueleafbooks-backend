@@ -69,8 +69,8 @@ router.post('/', auth, upload.fields([
       req.user?.email === 'blueleafbooks@hotmail.com';
     const isAuthor = req.user?.role === 'author';
 
-    // 🔥 FIX
-    const isDemo = isAdmin ? true : String(req.body?.isDemo || '').toLowerCase() === 'true';
+    // Demo knjiga je demo samo ako je eksplicitno označena u formi
+    const isDemo = String(req.body?.isDemo || '').toLowerCase() === 'true';
 
     if (!isAdmin && !isAuthor) {
       return res.status(403).json({ message: 'Access denied' });
@@ -144,7 +144,7 @@ router.put('/:id', auth, upload.fields([
       req.user?.email === 'blueleafbooks@hotmail.com';
     const isAuthor = req.user?.role === 'author';
 
-    const wantsDemo = isAdmin ? true : String(req.body?.isDemo || '').toLowerCase() === 'true';
+    const wantsDemo = String(req.body?.isDemo || '').toLowerCase() === 'true';
 
     if (!isAdmin && !isAuthor) {
       return res.status(403).json({ message: 'Access denied' });
@@ -171,7 +171,10 @@ router.put('/:id', auth, upload.fields([
 
     if (req.body.price) book.price = parseFloat(req.body.price);
 
-    if (isAdmin) book.isDemo = wantsDemo;
+    // Dozvoli adminu da uključi/isključi demo zastavicu preko forme
+    if (isAdmin) {
+      book.isDemo = wantsDemo;
+    }
 
     await book.save();
     res.json(book);
