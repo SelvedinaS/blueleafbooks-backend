@@ -24,6 +24,17 @@ function toDirectPdfUrl(pdfPath) {
   return `${BACKEND_BASE}/${clean}`;
 }
 
+function makeOrderDownloadToken(order) {
+  const payload = `${order._id}|${order.paymentId}`;
+  return crypto.createHmac('sha256', process.env.JWT_SECRET || 'blueleafbooks').update(payload).digest('hex');
+}
+
+function isValidOrderDownloadToken(order, token) {
+  if (!token || !order) return false;
+  const expected = makeOrderDownloadToken(order);
+  return token === expected;
+}
+
 /* =========================
    PAYPAL HELPERS (VERIFY)
 ========================= */
@@ -277,6 +288,7 @@ router.post('/', async (req, res) => {
           }
         : it.book
     }));
+    orderObj.downloadAllUrl = `${BACKEND_BASE}/api/orders/${orderObj._id}/download-all?token=${makeOrderDownloadToken(orderObj)}`;
 
     // Send order confirmation email (works for logged-in and guest checkout)
     try {
@@ -326,6 +338,60 @@ router.post('/', async (req, res) => {
     console.error('[Orders] Create failed:', error.message, error.stack);
     const status = error.status || 500;
     return res.status(status).json({ message: error.message });
+  }
+});
+
+/* =========================
+   GUEST/AUTO DOWNLOAD PAGE
+========================= */
+router.get('/:id/download-all', async (req, res) => {
+  try {
+    const token = String(req.query?.token || '');
+    const order = await Order.findById(req.params.id)
+      .populate('items.book', 'title pdfFile');
+
+    if (!order) return res.status(404).send('Order not found');
+    if (!isValidOrderDownloadToken(order, token)) return res.status(403).send('Invalid download token');
+
+    const links = (order.items || [])
+      .map((it) => {
+        const title = it?.book?.title || 'Book';
+        const pdf = it?.book?.pdfFile ? toDirectPdfUrl(it.book.pdfFile) : '';
+        return { title, url: pdf };
+      })
+      .filter((x) => !!x.url);
+
+    const listHtml = links
+      .map((x) => `<li><a href="${x.url}" target="_blank" rel="noopener">${x.title}</a></li>`)
+      .join('');
+    const linksJson = JSON.stringify(links.map(x => x.url));
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Downloading books...</title></head>
+<body style="font-family:Arial,sans-serif;padding:24px;">
+  <h2>Your books are being downloaded...</h2>
+  <p>If browser blocks automatic downloads, click links below:</p>
+  <ul>${listHtml || '<li>No files found.</li>'}</ul>
+  <p><a href="https://blueleafbooks.netlify.app/">Return to BlueLeafBooks</a></p>
+  <script>
+    const urls = ${linksJson};
+    urls.forEach((u, i) => {
+      setTimeout(() => {
+        const a = document.createElement('a');
+        a.href = u;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.download = '';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }, i * 350);
+    });
+  </script>
+</body></html>`);
+  } catch (error) {
+    return res.status(500).send('Failed to prepare downloads');
   }
 });
 
