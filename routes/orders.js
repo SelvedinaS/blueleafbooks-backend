@@ -14,6 +14,15 @@ const { sendEmail } = require('../utils/email');
 const router = express.Router();
 
 const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 5);
+const BACKEND_BASE = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || 'https://blueleafbooks-backend-geum.onrender.com')
+  .replace(/\/$/, '');
+
+function toDirectPdfUrl(pdfPath) {
+  if (!pdfPath || typeof pdfPath !== 'string') return '';
+  if (/^https?:\/\//i.test(pdfPath)) return pdfPath;
+  const clean = pdfPath.replace(/^\/+/, '');
+  return `${BACKEND_BASE}/${clean}`;
+}
 
 /* =========================
    PAYPAL HELPERS (VERIFY)
@@ -255,13 +264,18 @@ router.post('/', async (req, res) => {
       await book.save();
     }
 
-    await order.populate('items.book', 'title coverImage');
+    await order.populate('items.book', 'title coverImage pdfFile');
     await order.populate('customer', 'name email');
 
     const orderObj = order.toObject();
     orderObj.items = (orderObj.items || []).map(it => ({
       ...it,
-      book: it.book ? ensureFullUrls(it.book) : it.book
+      book: it.book
+        ? {
+            ...ensureFullUrls(it.book),
+            directPdfUrl: toDirectPdfUrl(it.book.pdfFile)
+          }
+        : it.book
     }));
 
     // Send order confirmation email (works for logged-in and guest checkout)
