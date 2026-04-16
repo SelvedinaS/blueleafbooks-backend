@@ -9,6 +9,7 @@ const User = require('../models/User');
 const { auth, authorize } = require('../middleware/auth');
 const { calculateCartPricing } = require('../utils/pricing');
 const { ensureFullUrls } = require('../utils/fileUrls');
+const { sendEmail } = require('../utils/email');
 
 const router = express.Router();
 
@@ -153,6 +154,7 @@ router.post('/', async (req, res) => {
        DETERMINE / CREATE CUSTOMER
     ========================= */
     let customer = null;
+    let guestTempPassword = null;
 
     // If a valid JWT is present, prefer that user
     const authHeader = req.header('Authorization');
@@ -188,6 +190,7 @@ router.post('/', async (req, res) => {
 
       if (!user) {
         const randomPassword = crypto.randomBytes(12).toString('hex');
+        guestTempPassword = randomPassword;
         user = new User({
           name: payerName || normalizedEmail,
           email: normalizedEmail,
@@ -260,6 +263,47 @@ router.post('/', async (req, res) => {
       ...it,
       book: it.book ? ensureFullUrls(it.book) : it.book
     }));
+
+    // Send order confirmation email (works for logged-in and guest checkout)
+    try {
+      const frontendBase = (process.env.FRONTEND_BASE_URL || 'https://blueleafbooks.netlify.app').replace(/\/$/, '');
+      const booksForEmail = (orderObj.items || [])
+        .map((item) => {
+          const b = item.book || {};
+          const title = b.title || 'Book';
+          const detailsUrl = b._id ? `${frontendBase}/book-details?id=${b._id}` : frontendBase;
+          const price = Number(item.price || 0).toFixed(2);
+          return `<li><strong>${title}</strong> - $${price}<br/><a href="${detailsUrl}" target="_blank" rel="noopener">Open book page</a></li>`;
+        })
+        .join('');
+
+      const loginUrl = `${frontendBase}/login`;
+      const accountHint = guestTempPassword
+        ? `
+          <p>We created an account for this purchase:</p>
+          <ul>
+            <li>Email: <strong>${orderObj.customer?.email || ''}</strong></li>
+            <li>Temporary password: <strong>${guestTempPassword}</strong></li>
+          </ul>
+          <p>Please log in and change your password after first login: <a href="${loginUrl}" target="_blank" rel="noopener">${loginUrl}</a></p>
+        `
+        : `<p>You can access your purchases in your account library: <a href="${loginUrl}" target="_blank" rel="noopener">${loginUrl}</a></p>`;
+
+      await sendEmail({
+        to: orderObj.customer?.email,
+        subject: 'Your BlueLeafBooks order confirmation',
+        html: `
+          <h2>Thank you for your purchase!</h2>
+          <p>Order ID: <strong>${orderObj._id}</strong></p>
+          <p>Total paid: <strong>$${Number(orderObj.totalAmount || 0).toFixed(2)}</strong></p>
+          <h3>Books</h3>
+          <ul>${booksForEmail}</ul>
+          ${accountHint}
+        `
+      });
+    } catch (emailErr) {
+      console.error('[Orders] Confirmation email failed:', emailErr.message);
+    }
 
     console.log('[Orders] Created order', orderObj._id, 'total:', totalAmount);
     return res.status(201).json(orderObj);

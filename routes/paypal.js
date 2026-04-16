@@ -1,7 +1,5 @@
 const express = require('express');
 const paypal = require('@paypal/checkout-server-sdk');
-const User = require('../models/User');
-const { auth, authorize } = require('../middleware/auth');
 const { calculateCartPricing } = require('../utils/pricing');
 
 const router = express.Router();
@@ -61,7 +59,7 @@ function parsePayPalError(err) {
 /* =========================
    CREATE ORDER
 ========================= */
-router.post('/create-order', auth, authorize('customer'), async (req, res) => {
+router.post('/create-order', async (req, res) => {
   try {
     const { items, discountCode } = req.body;
 
@@ -127,7 +125,7 @@ router.post('/create-order', auth, authorize('customer'), async (req, res) => {
 /* =========================
    CAPTURE ORDER
 ========================= */
-router.post('/capture-order', auth, authorize('customer'), async (req, res) => {
+router.post('/capture-order', async (req, res) => {
   const { orderId } = req.body;
 
   try {
