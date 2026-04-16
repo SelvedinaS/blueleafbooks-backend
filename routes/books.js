@@ -54,6 +54,244 @@ function makeSpacesKey(folder, name, ext) {
 const { ensureFullUrls, ensureFullUrlsMany } = require('../utils/fileUrls');
 
 /* =========================
+   PUBLIC BOOKS (LIST / DETAILS)
+========================= */
+
+// List books (public)
+router.get('/', async (req, res) => {
+  try {
+    const { genre, q } = req.query || {};
+
+    const query = {
+      isDeleted: false,
+      status: 'approved'
+    };
+
+    if (genre) {
+      const normalized = normalizeGenre(String(genre));
+      if (normalized) query.genre = normalized;
+    }
+
+    if (q) {
+      const s = String(q).trim();
+      if (s) query.$text = { $search: s };
+    }
+
+    const books = await Book.find(query)
+      .populate('author', 'name isBlocked')
+      .sort(q ? { score: { $meta: 'textScore' } } : { createdAt: -1 });
+
+    const visible = (books || []).filter(b => !b?.author?.isBlocked);
+    return res.json(ensureFullUrlsMany(visible));
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// Genres list
+router.get('/genres/list', (req, res) => {
+  return res.json(BOOK_GENRES || []);
+});
+
+// Featured: curated
+router.get('/featured/curated', async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || '8', 10) || 8));
+    const books = await Book.find({
+      isDeleted: false,
+      status: 'approved',
+      isFeatured: true
+    })
+      .populate('author', 'name isBlocked')
+      .sort({ featuredOrder: 1, createdAt: -1 })
+      .limit(limit);
+
+    const visible = (books || []).filter(b => !b?.author?.isBlocked);
+    return res.json(ensureFullUrlsMany(visible));
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// Featured: bestsellers
+router.get('/featured/bestsellers', async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || '8', 10) || 8));
+    const books = await Book.find({
+      isDeleted: false,
+      status: 'approved'
+    })
+      .populate('author', 'name isBlocked')
+      .sort({ salesCount: -1, createdAt: -1 })
+      .limit(limit);
+
+    const visible = (books || []).filter(b => !b?.author?.isBlocked);
+    return res.json(ensureFullUrlsMany(visible));
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// Featured: new
+router.get('/featured/new', async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || '8', 10) || 8));
+    const books = await Book.find({
+      isDeleted: false,
+      status: 'approved'
+    })
+      .populate('author', 'name isBlocked')
+      .sort({ createdAt: -1 })
+      .limit(limit);
+
+    const visible = (books || []).filter(b => !b?.author?.isBlocked);
+    return res.json(ensureFullUrlsMany(visible));
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// Rating status (must be purchased)
+router.get('/:id/rating-status', auth, async (req, res) => {
+  try {
+    if (req.user?.role !== 'customer') {
+      return res.json({ hasPurchased: false, canRate: false, message: 'Only customers can rate books.' });
+    }
+
+    const bookId = req.params.id;
+    const hasPurchased = await Order.exists({
+      customer: req.user._id,
+      paymentStatus: 'completed',
+      'items.book': bookId
+    });
+
+    if (!hasPurchased) {
+      return res.json({ hasPurchased: false, canRate: false, message: 'Only customers who purchased this book can rate it.' });
+    }
+
+    const book = await Book.findById(bookId).select('ratings rating ratingCount');
+    const existing = (book?.ratings || []).find(r => String(r.user) === String(req.user._id));
+
+    return res.json({
+      hasPurchased: true,
+      canRate: true,
+      existingRating: existing ? existing.value : 0,
+      rating: Number(book?.rating || 0),
+      ratingCount: Number(book?.ratingCount || 0)
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// Rate book
+router.post('/:id/rate', auth, async (req, res) => {
+  try {
+    if (req.user?.role !== 'customer') {
+      return res.status(403).json({ message: 'Only customers can rate books.' });
+    }
+
+    const bookId = req.params.id;
+    const rating = Number(req.body?.rating || 0);
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ message: 'Rating must be between 1 and 5.' });
+    }
+
+    const hasPurchased = await Order.exists({
+      customer: req.user._id,
+      paymentStatus: 'completed',
+      'items.book': bookId
+    });
+    if (!hasPurchased) {
+      return res.status(403).json({ message: 'Only customers who purchased this book can rate it.' });
+    }
+
+    const book = await Book.findById(bookId);
+    if (!book || book.isDeleted || book.status !== 'approved') {
+      return res.status(404).json({ message: 'Book not found' });
+    }
+
+    const existingIdx = (book.ratings || []).findIndex(r => String(r.user) === String(req.user._id));
+    if (existingIdx >= 0) {
+      book.ratings[existingIdx].value = rating;
+      book.ratings[existingIdx].updatedAt = new Date();
+    } else {
+      book.ratings.push({ user: req.user._id, value: rating });
+    }
+
+    // Recalculate average
+    const values = (book.ratings || []).map(r => Number(r.value || 0)).filter(v => v >= 1 && v <= 5);
+    const count = values.length;
+    const avg = count ? (values.reduce((s, v) => s + v, 0) / count) : 0;
+    book.ratingCount = count;
+    book.rating = Number(avg.toFixed(2));
+
+    await book.save();
+    return res.json({
+      success: true,
+      message: 'Rating saved successfully.',
+      rating: book.rating,
+      ratingCount: book.ratingCount
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// Download purchased book PDF
+router.get('/:id/download', auth, async (req, res) => {
+  try {
+    if (req.user?.role !== 'customer') {
+      return res.status(403).json({ message: 'Only customers can download purchased books.' });
+    }
+
+    const bookId = req.params.id;
+    const hasPurchased = await Order.exists({
+      customer: req.user._id,
+      paymentStatus: 'completed',
+      'items.book': bookId
+    });
+    if (!hasPurchased) {
+      return res.status(403).json({ message: 'You have not purchased this book.' });
+    }
+
+    const book = await Book.findById(bookId).select('pdfFile title isDeleted status');
+    if (!book || book.isDeleted) return res.status(404).json({ message: 'Book not found' });
+    if (book.status !== 'approved') return res.status(400).json({ message: 'Book not available' });
+
+    const pdfPath = String(book.pdfFile || '');
+    if (!pdfPath) return res.status(404).json({ message: 'File not found' });
+
+    if (/^https?:\/\//i.test(pdfPath)) {
+      return res.redirect(pdfPath);
+    }
+
+    const abs = path.join(__dirname, '..', pdfPath.replace(/^\/+/, ''));
+    return res.sendFile(abs);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// Get single book (public)
+router.get('/:id', async (req, res) => {
+  try {
+    const book = await Book.findOne({
+      _id: req.params.id,
+      isDeleted: false,
+      status: 'approved'
+    }).populate('author', 'name isBlocked');
+
+    if (!book) return res.status(404).json({ message: 'Book not found' });
+    if (book?.author?.isBlocked) return res.status(404).json({ message: 'Book not found' });
+
+    return res.json(ensureFullUrls(book));
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+/* =========================
    CREATE BOOK (FIXED)
 ========================= */
 

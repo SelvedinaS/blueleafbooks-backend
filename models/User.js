@@ -49,6 +49,18 @@ const userSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
+  },
+
+  // Email verification (default true to avoid locking existing users)
+  isEmailVerified: {
+    type: Boolean,
+    default: true
+  },
+  emailVerificationToken: {
+    type: String
+  },
+  emailVerificationExpires: {
+    type: Date
   }
 });
 

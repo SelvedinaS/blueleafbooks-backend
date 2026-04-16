@@ -8,6 +8,27 @@ const { sendEmail } = require('../utils/email');
 
 const router = express.Router();
 
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+async function sendVerificationEmail({ to, name, token }) {
+  const frontendBase = (process.env.FRONTEND_BASE_URL || 'https://blueleafbooks.netlify.app').replace(/\/$/, '');
+  const verifyUrl = `${frontendBase}/login?verify=${encodeURIComponent(token)}`;
+
+  await sendEmail({
+    to,
+    subject: 'Verify your email – BlueLeafBooks',
+    html: `
+      <h2>Verify your email</h2>
+      <p>Hello${name ? ` ${name}` : ''},</p>
+      <p>Please verify your email address to activate your account.</p>
+      <p><a href="${verifyUrl}" target="_blank" rel="noopener">Verify email</a></p>
+      <p>If you did not create this account, you can ignore this email.</p>
+    `
+  });
+}
+
 // Register
 router.post('/register', async (req, res) => {
   try {
@@ -45,15 +66,37 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'Email domain does not exist or cannot be reached' });
     }
 
+    const verificationToken = crypto.randomBytes(24).toString('hex');
+    const verificationHash = hashToken(verificationToken);
+    const verificationExpires = new Date(Date.now() + 1000 * 60 * 60 * 24); // 24h
+
     // Create user
     const user = new User({
       name,
       email: normalizedEmail,
       password,
-      role: role || 'customer'
+      role: role || 'customer',
+      isEmailVerified: false,
+      emailVerificationToken: verificationHash,
+      emailVerificationExpires: verificationExpires
     });
 
     await user.save();
+
+    // Send verification email (required)
+    try {
+      await sendVerificationEmail({
+        to: user.email,
+        name: user.name,
+        token: verificationToken
+      });
+    } catch (err) {
+      // If we cannot send verification, rollback account creation
+      await User.deleteOne({ _id: user._id });
+      return res.status(400).json({
+        message: 'Unable to send verification email. Please check the email address and try again.'
+      });
+    }
 
     // Send welcome email for authors
     if (user.role === 'author') {
@@ -73,24 +116,60 @@ router.post('/register', async (req, res) => {
       }
     }
 
-    // Generate token
-    const token = jwt.sign(
-      { userId: user._id },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
     res.status(201).json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
+      message: 'Account created. Please verify your email to log in.',
+      email: user.email
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+});
+
+// Verify email
+router.get('/verify-email', async (req, res) => {
+  try {
+    const token = String(req.query.token || '').trim();
+    if (!token) return res.status(400).json({ message: 'Verification token is required' });
+
+    const hashed = hashToken(token);
+    const user = await User.findOne({
+      emailVerificationToken: hashed,
+      emailVerificationExpires: { $gt: new Date() }
+    });
+
+    if (!user) return res.status(400).json({ message: 'Invalid or expired verification token' });
+
+    user.isEmailVerified = true;
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    await user.save();
+
+    return res.json({ success: true, message: 'Email verified successfully. You can now log in.' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+// Resend verification email
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) return res.status(400).json({ message: 'Email is required' });
+
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (user.isEmailVerified) return res.json({ success: true, message: 'Email is already verified.' });
+
+    const verificationToken = crypto.randomBytes(24).toString('hex');
+    user.emailVerificationToken = hashToken(verificationToken);
+    user.emailVerificationExpires = new Date(Date.now() + 1000 * 60 * 60 * 24);
+    await user.save();
+
+    await sendVerificationEmail({ to: user.email, name: user.name, token: verificationToken });
+
+    return res.json({ success: true, message: 'Verification email sent. Please check your inbox.' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 });
 
@@ -103,6 +182,10 @@ router.post('/login', async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    if (user.isEmailVerified === false) {
+      return res.status(403).json({ message: 'Please verify your email before logging in.' });
     }
 
     // Check password
