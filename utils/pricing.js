@@ -83,7 +83,7 @@ async function calculateCartPricing({ bookIds, couponCode }) {
   // If scope is author, ensure at least one book in cart belongs to that author.
   if (coupon.scope === 'author') {
     const hasAuthorBook = books.some(
-      b => b.author && coupon.author && b.author.toString() === coupon.author._id.toString()
+      b => b.author && coupon.author && String(b.author?._id || b.author) === String(coupon.author?._id || coupon.author)
     );
     if (!hasAuthorBook) {
       const err = new Error('This coupon is only valid for books by ' + (coupon.author?.name || 'the selected author'));
@@ -99,7 +99,7 @@ async function calculateCartPricing({ bookIds, couponCode }) {
 
     const isEligible =
       coupon.scope === 'all' ||
-      (coupon.scope === 'author' && coupon.author && book.author && book.author.toString() === coupon.author._id.toString());
+      (coupon.scope === 'author' && coupon.author && book.author && String(book.author?._id || book.author) === String(coupon.author?._id || coupon.author));
 
     const bookDiscountAmount = isEligible ? originalPrice * (discountPercentage / 100) : 0;
     const discountedPrice = Math.max(0, originalPrice - bookDiscountAmount);

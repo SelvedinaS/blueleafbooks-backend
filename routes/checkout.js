@@ -1,13 +1,12 @@
 const express = require('express');
 const Coupon = require('../models/Coupon');
 const Book = require('../models/Book');
-const { auth } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Apply coupon to cart
 // Rule: For author-scoped coupons, at least one item in the cart must belong to that author
-router.post('/apply-coupon', auth, async (req, res) => {
+router.post('/apply-coupon', async (req, res) => {
   try {
     const { code, bookIds } = req.body;
     
@@ -73,7 +72,7 @@ router.post('/apply-coupon', auth, async (req, res) => {
     // If scope is author, check that at least one book belongs to that author
     if (coupon.scope === 'author') {
       const hasAuthorBook = books.some(
-        book => book.author.toString() === coupon.author._id.toString()
+        book => String(book.author?._id || book.author) === String(coupon.author?._id || coupon.author)
       );
       
       if (!hasAuthorBook) {
@@ -90,7 +89,7 @@ router.post('/apply-coupon', auth, async (req, res) => {
     const discountedItems = books.map(book => {
       const isEligible =
         coupon.scope === 'all' ||
-        (coupon.scope === 'author' && coupon.author && book.author.toString() === coupon.author._id.toString());
+        (coupon.scope === 'author' && coupon.author && String(book.author?._id || book.author) === String(coupon.author?._id || coupon.author));
 
       const originalPrice = book.price;
       const bookDiscountAmount = isEligible
