@@ -27,6 +27,11 @@ const bookSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
+  productType: {
+    type: String,
+    enum: ['book', 'planner'],
+    default: 'book'
+  },
   coverImage: {
     type: String,
     required: true

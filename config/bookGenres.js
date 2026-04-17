@@ -6,6 +6,7 @@ const BOOK_GENRES = [
   'Comics & Graphic Novels',
   'Cooking & Food',
   'Crafts & Hobbies',
+  'Digital Planners',
   'Education',
   'Entrepreneurship',
   'Fantasy',
@@ -82,6 +83,13 @@ const GENRE_ALIASES = {
   'art': 'Art & Design',
   'art and design': 'Art & Design',
   'crafts': 'Crafts & Hobbies',
+  'planner': 'Digital Planners',
+  'planners': 'Digital Planners',
+  'digital planner': 'Digital Planners',
+  'digital planners': 'Digital Planners',
+  'printable planner': 'Digital Planners',
+  'printable planners': 'Digital Planners',
+  'planner bundle': 'Digital Planners',
   'language': 'Language Learning',
 };
 

@@ -28,7 +28,7 @@ const memoryStorage = multer.memoryStorage();
 
 const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    if (file.fieldname === 'pdfFile') cb(null, BOOKS_DIR);
+    if (file.fieldname === 'pdfFile' || file.fieldname === 'productFile') cb(null, BOOKS_DIR);
     else cb(null, COVERS_DIR);
   },
   filename: (req, file, cb) => {
@@ -44,7 +44,27 @@ if (!isSpacesConfigured()) {
   fs.mkdirSync(COVERS_DIR, { recursive: true });
 }
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+
+    if (file.fieldname === 'coverImage') {
+      if ((file.mimetype || '').startsWith('image/')) return cb(null, true);
+      return cb(new Error('Cover image must be an image file.'));
+    }
+
+    if (file.fieldname === 'pdfFile' || file.fieldname === 'productFile') {
+      if (ext === '.pdf' || ext === '.zip') return cb(null, true);
+      return cb(new Error('Product file must be a PDF or ZIP file.'));
+    }
+
+    cb(null, true);
+  },
+  limits: {
+    fileSize: 1024 * 1024 * 100
+  }
+});
 
 function makeSpacesKey(folder, name, ext) {
   const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
@@ -267,7 +287,9 @@ router.get('/:id/download', auth, async (req, res) => {
     }
 
     const abs = path.join(__dirname, '..', pdfPath.replace(/^\/+/, ''));
-    return res.sendFile(abs);
+    const ext = path.extname(abs).toLowerCase();
+    const safeTitle = String(book.title || 'download').replace(/[^a-z0-9\-_ ]/gi, '').trim() || 'download';
+    return res.download(abs, `${safeTitle}${ext || '.pdf'}`);
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -297,6 +319,7 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', auth, upload.fields([
   { name: 'pdfFile', maxCount: 1 },
+  { name: 'productFile', maxCount: 1 },
   { name: 'coverImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
@@ -330,17 +353,20 @@ router.post('/', auth, upload.fields([
       return res.status(400).json({ message: 'Invalid genre' });
     }
 
-    if (!req.files?.pdfFile || !req.files?.coverImage) {
-      return res.status(400).json({ message: 'Files required' });
+    const productFileUpload = req.files?.productFile?.[0] || req.files?.pdfFile?.[0];
+    if (!productFileUpload || !req.files?.coverImage) {
+      return res.status(400).json({ message: 'Cover image and product file are required.' });
     }
 
-    const pdf = req.files.pdfFile[0];
+    const pdf = productFileUpload;
     const cover = req.files.coverImage[0];
 
     let pdfUrl, coverUrl;
 
     if (isSpacesConfigured()) {
-      pdfUrl = await uploadToSpaces(pdf.buffer, makeSpacesKey('books', pdf.originalname, '.pdf'), 'application/pdf');
+      const productExt = path.extname(pdf.originalname || '').toLowerCase() || '.pdf';
+      const productMime = productExt === '.zip' ? 'application/zip' : 'application/pdf';
+      pdfUrl = await uploadToSpaces(pdf.buffer, makeSpacesKey('books', pdf.originalname, productExt), productMime);
       coverUrl = await uploadToSpaces(cover.buffer, makeSpacesKey('covers', cover.originalname), cover.mimetype);
     } else {
       pdfUrl = `uploads/books/${pdf.filename}`;
@@ -352,6 +378,7 @@ router.post('/', auth, upload.fields([
       description,
       genre: normalizedGenre,
       price: parseFloat(price),
+      productType: String(req.body?.productType || '').toLowerCase() === 'planner' || normalizedGenre === 'Digital Planners' ? 'planner' : 'book',
       author: req.user._id,
       pdfFile: pdfUrl,
       coverImage: coverUrl,
@@ -374,6 +401,7 @@ router.post('/', auth, upload.fields([
 
 router.put('/:id', auth, upload.fields([
   { name: 'pdfFile', maxCount: 1 },
+  { name: 'productFile', maxCount: 1 },
   { name: 'coverImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
@@ -408,6 +436,44 @@ router.put('/:id', auth, upload.fields([
     }
 
     if (req.body.price) book.price = parseFloat(req.body.price);
+
+    if (req.body.productType) {
+      const pt = String(req.body.productType).toLowerCase();
+      if (pt === 'book' || pt === 'planner') {
+        book.productType = pt;
+      }
+    } else if (book.genre === 'Digital Planners') {
+      book.productType = 'planner';
+    }
+
+    const updatedProductFile = req.files?.productFile?.[0] || req.files?.pdfFile?.[0];
+    const updatedCover = req.files?.coverImage?.[0];
+
+    if (updatedProductFile) {
+      if (isSpacesConfigured()) {
+        const productExt = path.extname(updatedProductFile.originalname || '').toLowerCase() || '.pdf';
+        const productMime = productExt === '.zip' ? 'application/zip' : 'application/pdf';
+        book.pdfFile = await uploadToSpaces(
+          updatedProductFile.buffer,
+          makeSpacesKey('books', updatedProductFile.originalname, productExt),
+          productMime
+        );
+      } else {
+        book.pdfFile = `uploads/books/${updatedProductFile.filename}`;
+      }
+    }
+
+    if (updatedCover) {
+      if (isSpacesConfigured()) {
+        book.coverImage = await uploadToSpaces(
+          updatedCover.buffer,
+          makeSpacesKey('covers', updatedCover.originalname),
+          updatedCover.mimetype
+        );
+      } else {
+        book.coverImage = `uploads/covers/${updatedCover.filename}`;
+      }
+    }
 
     // Dozvoli adminu da uključi/isključi demo zastavicu preko forme
     if (isAdmin) {
