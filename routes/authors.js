@@ -8,7 +8,7 @@ const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
-const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 5);
+const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 0);
 
 function calcFeeFromNet(net, feePct) {
   const rate = feePct / 100;
@@ -90,7 +90,7 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
         }).select('authorEarningsBreakdown createdAt')
       : [];
 
-    // Orders for previous month (due by 10th of current month)
+    // Orders for previous month (payout window: 1st–10th of current month)
     const ordersPrev = (prevRange && effectivePrevStart && effectivePrevStart < prevRange.end)
       ? await Order.find({
           paymentStatus: 'completed',
@@ -184,13 +184,13 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
       if (st) lastMonthStatus = { isPaid: !!st.isPaid, paidAt: st.paidAt || null, note: st.note || '' };
     }
 
-    // Due dates:
-    // - last month is due on the 10th of the CURRENT month
-    // - current month will be due on the 10th of NEXT month
-    const lastMonthDueDate = prevRange ? new Date(prevRange.end.getFullYear(), prevRange.end.getMonth(), 10) : null;
-    const currentMonthDueDate = currentRange ? new Date(currentRange.end.getFullYear(), currentRange.end.getMonth(), 10) : null;
+    // Payout window: 1st–10th of the month following the sales period
+    const lastMonthPayoutWindowStart = prevRange ? new Date(prevRange.end.getFullYear(), prevRange.end.getMonth(), 1) : null;
+    const lastMonthPayoutWindowEnd = prevRange ? new Date(prevRange.end.getFullYear(), prevRange.end.getMonth(), 10) : null;
+    const currentMonthPayoutWindowStart = currentRange ? new Date(currentRange.end.getFullYear(), currentRange.end.getMonth(), 1) : null;
+    const currentMonthPayoutWindowEnd = currentRange ? new Date(currentRange.end.getFullYear(), currentRange.end.getMonth(), 10) : null;
 
-    const lastMonthOverdue = !!(lastMonthDueDate && !lastMonthStatus.isPaid && now > lastMonthDueDate && lastMonthFeeDue > 0);
+    const lastMonthOverdue = !!(lastMonthPayoutWindowEnd && !lastMonthStatus.isPaid && now > lastMonthPayoutWindowEnd && lastMonthGrossSales > 0);
 
     const platformFeeToShow = lastMonthFeeDue;
     const grossSalesToShow = lastMonthGrossSales;
@@ -201,7 +201,7 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
       totalEarnings: totalEarnings.toFixed(2),
       unpaidEarnings: unpaidEarnings.toFixed(2),
 
-      // Last month (previous calendar month) — DUE by the 10th of this month
+      // Last month (previous calendar month) — payout window: 1st–10th of this month
       platformFee: Number(platformFeeToShow.toFixed(2)),
       grossSales: Number(grossSalesToShow.toFixed(2)),
       lastMonth: {
@@ -211,12 +211,13 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
         effectiveStart: (prevRange && effectivePrevStart) ? effectivePrevStart : null,
         grossSales: Number(lastMonthGrossSales.toFixed(2)),
         feeDue: Number(lastMonthFeeDue.toFixed(2)),
-        dueDate: lastMonthDueDate,
+        payoutWindowStart: lastMonthPayoutWindowStart,
+        payoutWindowEnd: lastMonthPayoutWindowEnd,
         status: lastMonthStatus,
         overdue: lastMonthOverdue
       },
 
-      // Current month (accrued, not due yet) — will be due by the 10th of next month
+      // Current month (accrued, not due yet) — payout window: 1st–10th of next month
       currentMonth: {
         period: currentPeriod,
         start: currentRange ? currentRange.start : null,
@@ -224,7 +225,8 @@ router.get('/dashboard', auth, authorize('author'), async (req, res) => {
         effectiveStart: (currentRange && effectiveCurrentStart) ? effectiveCurrentStart : null,
         grossSalesAccrued: Number(currentMonthGrossSales.toFixed(2)),
         feeAccrued: Number(currentMonthFeeAccrued.toFixed(2)),
-        dueDate: currentMonthDueDate
+        payoutWindowStart: currentMonthPayoutWindowStart,
+        payoutWindowEnd: currentMonthPayoutWindowEnd
       },
 
       adminPaymentEmail,

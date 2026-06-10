@@ -13,7 +13,7 @@ const { sendEmail } = require('../utils/email');
 
 const router = express.Router();
 
-const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 5);
+const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 0);
 const BACKEND_BASE = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || 'https://blueleafbooks-backend-geum.onrender.com')
   .replace(/\/$/, '');
 

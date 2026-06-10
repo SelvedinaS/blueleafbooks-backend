@@ -11,7 +11,7 @@ const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
-const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 5);
+const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || 0);
 
 
 function parsePeriod(periodStr) {

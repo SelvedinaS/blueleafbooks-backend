@@ -155,7 +155,7 @@ router.get('/featured/bestsellers', async (req, res) => {
 // Featured: new
 router.get('/featured/new', async (req, res) => {
   try {
-    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || '8', 10) || 8));
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || '4', 10) || 4));
     const books = await Book.find({
       isDeleted: false,
       status: 'approved'
