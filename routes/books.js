@@ -341,12 +341,6 @@ router.post('/', auth, upload.fields([
       return res.status(403).json({ message: 'Account blocked' });
     }
 
-    if (!isAdmin) {
-      const user = await User.findById(req.user._id);
-      if (!user?.payoutPaypalEmail) {
-        return res.status(403).json({ message: 'Add PayPal first' });
-      }
-    }
 
     const normalizedGenre = normalizeGenre(genre);
     if (!normalizedGenre) {
